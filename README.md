@@ -4,6 +4,11 @@ SOAP (Simple Object Access Protocol) is a normalized exchange protocol based on 
 
 This extension enables you to develop web services that consume and produce SOAP payloads using the [Apache CXF](http://cxf.apache.org/) libraries.
 
+  - [Credits](#credits)
+  - [Configuration](#configuration)
+  - [Creating a SOAP Web service](#creating-a-soap-web-service)
+  - [Creating a SOAP Client](#creating-a-soap-client)
+
 ## Credits
 
 This project builds upon a considerable amount of work done as part of a separate effort. Please review [CREDITS.md](https://github.com/shumonsharif/quarkus-cxf/blob/master/CREDITS.md) for more details.
@@ -169,7 +174,7 @@ The implementation is pretty straightforward and you just need to define your en
 In order to support only SOAP client, register endpoint URL and the service endpoint interface (same as the server) with configuration:
 
     quarkus.cxf.endpoint."/fruit".client-endpoint-url=http://localhost:8080/
-    quarkus.cxf.endpoint."/fruit".service-interface=io.quarkus.cxf.deployment.test.FruitWebService
+    quarkus.cxf.endpoint."/fruit".service-interface=org.acme.cxf.FruitWebService
 
 Then inject the client to use it:
 
