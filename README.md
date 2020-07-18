@@ -2,10 +2,11 @@
 
 SOAP (Simple Object Access Protocol) is a normalized exchange protocol based on XML, predating the era of REST services.
 
-This extension enables you to develop web services that consume and produce SOAP payloads using [Apache CXF](http://cxf.apache.org/).
+This extension enables you to develop web services that consume and produce SOAP payloads using the [Apache CXF](http://cxf.apache.org/) libraries.
 
-## Features
-- The CXF beans are initialized lazily by Quarkus, if you want eager initialization, make sure to double-check [Quarkus Documentation](https://quarkus.io/guides/cdi-reference#eager-instantiation-of-beans). 
+## Credits
+
+This project builds upon a considerable amount of work done as part of a separate effort. Please review [CREDITS.md](https://github.com/shumonsharif/quarkus-cxf/blob/master/CREDITS.md) for more details.
 
 ## Configuration
 
@@ -181,5 +182,3 @@ Then inject the client to use it:
             return clientService.count();
         }
     }
-
-
