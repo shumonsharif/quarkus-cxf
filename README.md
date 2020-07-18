@@ -1,5 +1,7 @@
 # CXF Extension for Quarkus
 
+<a href="https://github.com/actions/toolkit"><img alt="GitHub Actions status" src="https://github.com/shumonsharif/quarkus-cxf/workflows/build/badge.svg?branch=master"></a>
+
 SOAP (Simple Object Access Protocol) is a normalized exchange protocol based on XML, predating the era of REST services.
 
 This extension enables you to develop web services that consume and produce SOAP payloads using the [Apache CXF](http://cxf.apache.org/) libraries.
