@@ -1,0 +1,34 @@
+name: Publish package to the Maven Central Repository
+on:
+  release:
+    types: [published]
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Configure GPG Key
+        run: |
+          mkdir -p ~/.gnupg/
+          printf "$OSSRH_GPG_SECRET_KEY" | base64 --decode > ~/.gnupg/private.key
+          gpg --batch --import ~/.gnupg/private.key
+          gpg --list-secret-keys --keyid-format LONG
+        env:
+          OSSRH_GPG_SECRET_KEY: ${{ secrets.OSSRH_GPG_SECRET_KEY }}
+
+      - name: Set up Maven Central Repository
+        uses: actions/setup-java@v1
+        with:
+          java-version: 1.8
+
+      - name: Configure settings.xml
+        run: |
+          echo "<settings><servers><server><id>ossrh</id><username>${{ secrets.OSSRH_USERNAME }}</username><password>${{ secrets.OSSRH_TOKEN }}</password></server></servers><profiles><profile><id>ossrh</id><activation><activeByDefault>true</activeByDefault></activation><properties><gpg.keyname>${{ secrets.GPG_KEY_ID }}</gpg.keyname><gpg.passphrase>'${{ secrets.GPG_PASSPHRASE }}'</gpg.passphrase></properties></profile></profiles></settings>" > /home/runner/.m2/settings.xml
+
+      - name: Publish package
+        run: |
+          mvn \
+            --no-transfer-progress \
+            --batch-mode \
+            clean deploy
