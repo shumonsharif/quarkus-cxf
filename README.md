@@ -21,6 +21,7 @@ This project builds upon a considerable amount of work done as part of a separat
 
 After configuring `quarkus-universe BOM`:
 
+```xml
     <dependencyManagement>
         <dependencies>
             <dependency>
@@ -32,14 +33,16 @@ After configuring `quarkus-universe BOM`:
             </dependency>
         </dependencies>
     </dependencyManagement>
+```
 
 You can just configure the `quarkus-cxf` extension by adding the following dependency:
 
+```xml
     <dependency>
         <groupId>com.github.shumonsharif</groupId>
         <artifactId>quarkus-cxf</artifactId>
     </dependency>
-    
+```
 <!--
 ***NOTE:*** You can bootstrap a new application quickly by using [code.quarkus.io](https://code.quarkus.io) and choosing `quarkus-cxf`.
 -->
@@ -50,6 +53,7 @@ In this example, we will create an application to manage a list of fruits.
 
 First, let's create the `Fruit` bean as follows:
 
+```java
     package org.acme.cxf;
 
     import java.util.Objects;
@@ -106,9 +110,11 @@ First, let's create the `Fruit` bean as follows:
             return Objects.hash(this.getName());
         }
     }
+```
 
 Now, create the `org.acme.cxf.FruitWebService` class as follows:
 
+```java
     package org.acme.cxf;
 
     import java.util.Set;
@@ -129,10 +135,11 @@ Now, create the `org.acme.cxf.FruitWebService` class as follows:
         @WebMethod
         Set<Fruit> delete(Fruit fruit);
     }
-
+```
 
 Then, create the `org.acme.cxf.FruitWebServiceImpl` class as follows:
 
+```java
     package org.acme.cxf;
 
     import java.util.Collections;
@@ -168,21 +175,27 @@ Then, create the `org.acme.cxf.FruitWebServiceImpl` class as follows:
             return fruits;
         }
     }
+```
 
 The implementation is pretty straightforward and you just need to define your endpoints using the `application.properties`.
 
+```properties
     quarkus.cxf.path=/cxf
     quarkus.cxf.endpoint."/fruit".implementor=org.acme.cxf.FruitWebServiceImpl
+```
 
 ## Creating a SOAP Client
 
 In order to support only SOAP client, register endpoint URL and the service endpoint interface (same as the server) with configuration:
 
+```properties
     quarkus.cxf.endpoint."/fruit".client-endpoint-url=http://localhost:8080/
     quarkus.cxf.endpoint."/fruit".service-interface=org.acme.cxf.FruitWebService
+```
 
 Then inject the client to use it:
 
+```java
     public class MySoapClient {
 
         @Inject
@@ -192,3 +205,4 @@ Then inject the client to use it:
             return clientService.count();
         }
     }
+```
