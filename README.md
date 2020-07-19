@@ -22,26 +22,27 @@ This project builds upon a considerable amount of work done as part of a separat
 After configuring `quarkus-universe BOM`:
 
 ```xml
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>io.quarkus</groupId>
-                <artifactId>quarkus-universe-bom</artifactId>
-                <version>${insert.newest.quarkus.version.here}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-universe-bom</artifactId>
+            <version>${insert.newest.quarkus.version.here}</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
 ```
 
 You can just configure the `quarkus-cxf` extension by adding the following dependency:
 
 ```xml
-    <dependency>
-        <groupId>com.github.shumonsharif</groupId>
-        <artifactId>quarkus-cxf</artifactId>
-    </dependency>
+<dependency>
+    <groupId>com.github.shumonsharif</groupId>
+    <artifactId>quarkus-cxf</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+</dependency>
 ```
 <!--
 ***NOTE:*** You can bootstrap a new application quickly by using [code.quarkus.io](https://code.quarkus.io) and choosing `quarkus-cxf`.
@@ -54,134 +55,153 @@ In this example, we will create an application to manage a list of fruits.
 First, let's create the `Fruit` bean as follows:
 
 ```java
-    package org.acme.cxf;
+package org.acme.cxf;
 
-    import java.util.Objects;
+import java.util.Objects;
 
-    import javax.xml.bind.annotation.XmlType;
+import javax.xml.bind.annotation.XmlElement;
+import javax.xml.bind.annotation.XmlRootElement;
+import javax.xml.bind.annotation.XmlType;
 
-    @XmlRootElement
-    @XmlAccessorType(XmlAccessType.NONE)
-    public class Fruit {
-        @XmlElement
-        private String name;
+@XmlType(name = "Fruit")
+@XmlRootElement
+public class Fruit {
 
-        @XmlElement
-        private String description;
+    private String name;
 
-        public Fruit() {
-        }
+    private String description;
 
-        public Fruit(String name, String description) {
-            this.name = name;
-            this.description = description;
-        }
-
-        public String getName() {
-            return name;
-        }
-
-        public void setName(String name) {
-            this.name = name;
-        }
-
-        public String getDescription() {
-            return description;
-        }
-
-
-        public void setDescription(String description) {
-            this.description = description;
-        }
-
-        @Override
-        public boolean equals(Object obj) {
-            if (!(obj instanceof Fruit)) {
-                return false;
-            }
-
-            Fruit other = (Fruit) obj;
-
-            return Objects.equals(other.getName(), this.getName());
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(this.getName());
-        }
+    public Fruit() {
     }
+
+    public Fruit(String name, String description) {
+        this.name = name;
+        this.description = description;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    @XmlElement
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    @XmlElement
+    public void setDescription(String description) {
+        this.description = description;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (!(obj instanceof Fruit)) {
+            return false;
+        }
+
+        Fruit other = (Fruit) obj;
+
+        return Objects.equals(other.getName(), this.getName());
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(this.getName());
+    }
+}
 ```
 
 Now, create the `org.acme.cxf.FruitWebService` class as follows:
 
 ```java
-    package org.acme.cxf;
+package org.acme.cxf;
 
-    import java.util.Set;
+import java.util.Set;
 
-    import javax.jws.WebMethod;
-    import javax.jws.WebParam;
-    import javax.jws.WebService;
+import javax.jws.WebMethod;
+import javax.jws.WebParam;
+import javax.jws.WebService;
 
-    @WebService
-    public interface FruitWebService {
+@WebService
+public interface FruitWebService {
 
-        @WebMethod
-        Set<Fruit> list();
+    @WebMethod
+    Set<Fruit> list();
 
-        @WebMethod
-        Set<Fruit> add(Fruit fruit);
+    @WebMethod
+    Set<Fruit> add(Fruit fruit);
 
-        @WebMethod
-        Set<Fruit> delete(Fruit fruit);
-    }
+    @WebMethod
+    Set<Fruit> delete(Fruit fruit);
+}
 ```
 
 Then, create the `org.acme.cxf.FruitWebServiceImpl` class as follows:
 
 ```java
-    package org.acme.cxf;
+package org.acme.cxf;
 
-    import java.util.Collections;
-    import java.util.LinkedHashMap;
-    import java.util.Set;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Set;
 
-    import javax.jws.WebService;
+import javax.jws.WebService;
 
-    @WebService(endpointInterface = "org.acme.cxf.FruitWebService")
-    public class FruitWebServiceImpl implements FruitWebService {
+@WebService(endpointInterface = "org.acme.cxf.FruitWebService")
+public class FruitWebServiceImpl implements FruitWebService {
 
-        private Set<Fruit> fruits = Collections.newSetFromMap(Collections.synchronizedMap(new LinkedHashMap<>()));
+    private Set<Fruit> fruits = Collections.newSetFromMap(Collections.synchronizedMap(new LinkedHashMap<>()));
 
-        public FruitWebServiceImpl() {
-            fruits.add(new Fruit("Apple", "Winter fruit"));
-            fruits.add(new Fruit("Pineapple", "Tropical fruit"));
-        }
-
-        @Override
-        public Set<Fruit> list() {
-            return fruits;
-        }
-
-        @Override
-        public Set<Fruit> add(Fruit fruit) {
-            fruits.add(fruit);
-            return fruits;
-        }
-
-        @Override
-        public Set<Fruit> delete(Fruit fruit) {
-            fruits.remove(fruit);
-            return fruits;
-        }
+    public FruitWebServiceImpl() {
+        fruits.add(new Fruit("Apple", "Winter fruit"));
+        fruits.add(new Fruit("Pineapple", "Tropical fruit"));
     }
+
+    @Override
+    public Set<Fruit> list() {
+        return fruits;
+    }
+
+    @Override
+    public Set<Fruit> add(Fruit fruit) {
+        fruits.add(fruit);
+        return fruits;
+    }
+
+    @Override
+    public Set<Fruit> delete(Fruit fruit) {
+        fruits.remove(fruit);
+        return fruits;
+    }
+}
 ```
 
 The implementation is pretty straightforward and you just need to define your endpoints using the `application.properties`.
 
 ```properties
-    quarkus.cxf.path=/cxf
-    quarkus.cxf.endpoint."/fruit".implementor=org.acme.cxf.FruitWebServiceImpl
+quarkus.cxf.path=/cxf
+quarkus.cxf.endpoint."/fruit".implementor=org.acme.cxf.FruitWebServiceImpl
+```
+
+The following sample curl command can be used to test your Fruit service.
+
+```
+curl -X POST "http://localhost:8080/cxf/fruit" \
+ -H 'Content-Type: text/xml' \
+ -H 'SOAPAction:' \
+ -d '
+ <soapenv:Envelope 
+ xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+ xmlns:cxf="http://cxf.acme.org/">
+   <soapenv:Header/>
+   <soapenv:Body>
+      <cxf:list/>
+   </soapenv:Body>
+</soapenv:Envelope>'
 ```
 
 ## Creating a SOAP Client
@@ -189,20 +209,20 @@ The implementation is pretty straightforward and you just need to define your en
 In order to support only SOAP client, register endpoint URL and the service endpoint interface (same as the server) with configuration:
 
 ```properties
-    quarkus.cxf.endpoint."/fruit".client-endpoint-url=http://localhost:8080/
-    quarkus.cxf.endpoint."/fruit".service-interface=org.acme.cxf.FruitWebService
+quarkus.cxf.endpoint."/fruit".client-endpoint-url=http://localhost:8080/
+quarkus.cxf.endpoint."/fruit".service-interface=org.acme.cxf.FruitWebService
 ```
 
 Then inject the client to use it:
 
 ```java
-    public class MySoapClient {
+public class MySoapClient {
 
-        @Inject
-        FruitWebService clientService;
+    @Inject
+    FruitWebService clientService;
 
-        public int getCount() {
-            return clientService.count();
-        }
+    public int getCount() {
+        return clientService.count();
     }
+}
 ```
