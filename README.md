@@ -12,6 +12,7 @@ This extension enables you to develop web services that consume and produce SOAP
   - [Configuration](#configuration)
   - [Creating a SOAP Web service](#creating-a-soap-web-service)
   - [Creating a SOAP Client](#creating-a-soap-client)
+  - [Native Mode Limitations](#native-mode-limitations)
 
 ## Credits
 
@@ -226,3 +227,11 @@ public class MySoapClient {
     }
 }
 ```
+
+## Native Mode Limitations
+
+- Native mode is currently not fully functional, though work is in progress to make it as such.
+- Please feel free to submit pull requests; to execute native integration tests, you can use:
+    ```
+    mvn integration-test -pl :quarkus-cxf-integration-tests -Dnative
+    ```
