@@ -21,6 +21,7 @@ import javax.xml.bind.JAXBElement;
 import javax.xml.bind.annotation.*;
 import javax.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
 
+import io.quarkus.runtime.util.HashUtil;
 import org.apache.cxf.common.jaxb.JAXBUtils;
 import org.apache.cxf.common.util.StringUtils;
 import org.jboss.jandex.AnnotationInstance;
@@ -54,7 +55,6 @@ import io.quarkus.deployment.builditem.nativeimage.NativeImageProxyDefinitionBui
 import io.quarkus.deployment.builditem.nativeimage.NativeImageResourceBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveClassBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.RuntimeInitializedClassBuildItem;
-import io.quarkus.deployment.util.HashUtil;
 import io.quarkus.gizmo.BranchResult;
 import io.quarkus.gizmo.BytecodeCreator;
 import io.quarkus.gizmo.ClassCreator;
