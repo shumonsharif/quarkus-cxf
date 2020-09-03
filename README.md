@@ -1,7 +1,7 @@
 # CXF Extension for Quarkus
 
 [![Build](https://github.com/shumonsharif/quarkus-cxf/workflows/build/badge.svg)](https://github.com/shumonsharif/quarkus-cxf/actions?query=workflow%3Abuild)
-[![Nexus](https://img.shields.io/nexus/r/com.github.shumonsharif/quarkus-cxf?nexusVersion=2&server=https%3A%2F%2Foss.sonatype.org)]()
+[![Nexus](https://img.shields.io/nexus/s/com.github.shumonsharif/quarkus-cxf?server=https%3A%2F%2Foss.sonatype.org)]()
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 SOAP (Simple Object Access Protocol) is a normalized exchange protocol based on XML, predating the era of REST services.
