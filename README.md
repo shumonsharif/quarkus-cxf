@@ -20,14 +20,14 @@ This project builds upon a considerable amount of work done as part of a separat
 
 ## Configuration
 
-After configuring `quarkus-universe BOM`:
+After configuring `quarkus BOM`:
 
 ```xml
 <dependencyManagement>
     <dependencies>
         <dependency>
             <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-universe-bom</artifactId>
+            <artifactId>quarkus-bom</artifactId>
             <version>${insert.newest.quarkus.version.here}</version>
             <type>pom</type>
             <scope>import</scope>
@@ -42,7 +42,7 @@ You can just configure the `quarkus-cxf` extension by adding the following depen
 <dependency>
     <groupId>com.github.shumonsharif</groupId>
     <artifactId>quarkus-cxf</artifactId>
-    <version>1.0.0-alpha-01</version>
+    <version>1.0.0-SNAPSHOT</version>
 </dependency>
 ```
 <!--
