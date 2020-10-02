@@ -4,7 +4,7 @@ import org.apache.cxf.jaxws.JaxWsProxyFactoryBean;
 
 public class AbstractCxfClientProducer {
 
-    public Object loadCxfClient(String sei, String endpointAddress, String wsdlUrl) {
+    public Object loadCxfClient(String sei, String endpointAddress, String wsdlUrl, String soapBinding) {
         Class<?> seiClass;
         try {
             seiClass = Class.forName(sei);
@@ -14,6 +14,7 @@ public class AbstractCxfClientProducer {
         JaxWsProxyFactoryBean factory = new JaxWsProxyFactoryBean();
         factory.setServiceClass(seiClass);
         factory.setAddress(endpointAddress);
+        factory.setBindingId(soapBinding);
         if (wsdlUrl != null && !wsdlUrl.isEmpty()) {
             factory.setWsdlURL(wsdlUrl);
         }

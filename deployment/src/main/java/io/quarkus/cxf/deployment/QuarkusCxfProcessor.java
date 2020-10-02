@@ -85,6 +85,7 @@ class QuarkusCxfProcessor {
     private static final DotName ABSTRACT_FEATURE = DotName.createSimple("org.apache.cxf.feature.AbstractFeature");
     private static final DotName ABSTRACT_INTERCEPTOR = DotName.createSimple("org.apache.cxf.phase.AbstractPhaseInterceptor");
     private static final DotName DATABINDING = DotName.createSimple("org.apache.cxf.databinding");
+    private static final DotName BINDING_TYPE_ANNOTATION = DotName.createSimple("javax.xml.ws.BindingType");
     private static final Logger LOGGER = Logger.getLogger(QuarkusCxfProcessor.class);
     private static final List<Class<? extends Annotation>> JAXB_ANNOTATIONS = Arrays.asList(
             XmlList.class,
@@ -118,7 +119,7 @@ class QuarkusCxfProcessor {
                     cxfServletInfo.getClassName(), cxfServletInfo.getInInterceptors(),
                     cxfServletInfo.getOutInterceptors(), cxfServletInfo.getOutFaultInterceptors(),
                     cxfServletInfo.getInFaultInterceptors(), cxfServletInfo.getFeatures(), cxfServletInfo.getSei(),
-                    cxfServletInfo.getWsdlPath());
+                    cxfServletInfo.getWsdlPath(), cxfServletInfo.getSOAPBinding());
         }
     }
 
@@ -533,6 +534,12 @@ class QuarkusCxfProcessor {
             if (annotation.target().kind() != AnnotationTarget.Kind.CLASS) {
                 continue;
             }
+            String soapBinding = SOAPBinding.SOAP11HTTP_BINDING;
+            AnnotationInstance bindingTypeAnnotation = index.getAnnotation(annotation.target(), BINDING_TYPE_ANNOTATION);
+            if (bindingTypeAnnotation != null) {
+                soapBinding = bindingTypeAnnotation.value("value");
+            }
+            annotation.value("targetNamespace");
             ClassInfo wsClassInfo = annotation.target().asClass();
             reflectiveClass
                     .produce(new ReflectiveClassBuildItem(true, true, wsClassInfo.name().toString()));
@@ -725,7 +732,7 @@ class QuarkusCxfProcessor {
                 wsAbsoluteUrl = relativePath.startsWith("/") ? wsAbsoluteUrl + relativePath
                         : wsAbsoluteUrl + "/" + relativePath;
 
-                generateCxfClientProducer(generatedBeans, sei + "CxfClientProducer", wsAbsoluteUrl, sei, wsdlPath);
+                generateCxfClientProducer(generatedBeans, sei + "CxfClientProducer", wsAbsoluteUrl, sei, wsdlPath, soapBinding);
 
             }
             if (cxfEndPointConfig.implementor.isPresent()) {
@@ -735,7 +742,7 @@ class QuarkusCxfProcessor {
 
                 if (wsClass != null) {
                     for (Type wsInterfaceType : wsClass.interfaceTypes()) {
-                        //TODO annotation is not seen do not know why so comment it for moment
+                        //TODO annotation is not seen, do not know why so comment it for now
                         //if (wsInterfaceType.hasAnnotation(WEBSERVICE_ANNOTATION)) {
                         sei = wsInterfaceType.name().toString();
                         //}
@@ -743,7 +750,7 @@ class QuarkusCxfProcessor {
                 }
 
                 CXFServletInfoBuildItem cxfServletInfo = new CXFServletInfoBuildItem(relativePath,
-                        cxfEndPointConfig.implementor.get(), sei, wsdlPath);
+                        cxfEndPointConfig.implementor.get(), sei, wsdlPath, soapBinding);
                 for (AnnotationInstance annotation : wsClass.classAnnotations()) {
                     switch (annotation.name().toString()) {
                         case "org.apache.cxf.feature.Features":
@@ -832,12 +839,12 @@ class QuarkusCxfProcessor {
      * &#64;Default
      * public FruitWebService createService() {
      * return (FruitWebService) loadCxfClient ("org.acme.FruitWebService", "http://localhost/fruit",
-     * "http://myServiceNamespace", "FruitWebServiceName", "http://myPortNamespace", "fruitWebServicePortName");
+     * "http://myServiceNamespace", "FruitWebServiceName", "http://myPortNamespace", "fruitWebServicePortName", SOAPBinding.SOAP11HTTP_BINDING);
      * }
      *
      */
     private void generateCxfClientProducer(BuildProducer<GeneratedBeanBuildItem> generatedBean,
-            String cxfClientProducerClassName, String endpointAddress, String sei, String wsdlUrl) {
+            String cxfClientProducerClassName, String endpointAddress, String sei, String wsdlUrl, String soapBinding) {
         ClassOutput classOutput = new GeneratedBeanGizmoAdaptor(generatedBean);
 
         ClassCreator classCreator = ClassCreator.builder().classOutput(classOutput)
@@ -855,6 +862,8 @@ class QuarkusCxfProcessor {
 
         ResultHandle seiRH = cxfClientMethodCreator.load(sei);
         ResultHandle endpointAddressRH = cxfClientMethodCreator.load(endpointAddress);
+        ResultHandle soapBindingRH = cxfClientMethodCreator.load(soapBinding);
+
         ResultHandle wsdlUrlRH;
         if (wsdlUrl != null) {
             wsdlUrlRH = cxfClientMethodCreator.load(wsdlUrl);
@@ -869,8 +878,9 @@ class QuarkusCxfProcessor {
                         Object.class,
                         String.class,
                         String.class,
+                        String.class,
                         String.class),
-                cxfClientMethodCreator.getThis(), seiRH, endpointAddressRH, wsdlUrlRH);
+                cxfClientMethodCreator.getThis(), seiRH, endpointAddressRH, wsdlUrlRH, soapBindingRH);
         ResultHandle cxfClientCasted = cxfClientMethodCreator.checkCast(cxfClient, sei);
         cxfClientMethodCreator.returnValue(cxfClientCasted);
 
