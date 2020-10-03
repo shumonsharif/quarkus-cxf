@@ -13,8 +13,9 @@ public class CXFServletInfo {
     private List<String> features;
     private String sei;
     private String wsdlPath;
+    private String soapBinding;
 
-    public CXFServletInfo(String path, String className, String sei, String wsdlPath) {
+    public CXFServletInfo(String path, String className, String sei, String wsdlPath, String soapBinding) {
         super();
         this.path = path;
         this.className = className;
@@ -25,6 +26,7 @@ public class CXFServletInfo {
         this.features = new ArrayList<>();
         this.sei = sei;
         this.wsdlPath = wsdlPath;
+        this.soapBinding = soapBinding;
     }
 
     public String getClassName() {
@@ -61,6 +63,10 @@ public class CXFServletInfo {
 
     public List<String> getInFaultInterceptors() {
         return inFaultInterceptors;
+    }
+
+    public String getSOAPBinding() {
+        return soapBinding;
     }
 
     @Override

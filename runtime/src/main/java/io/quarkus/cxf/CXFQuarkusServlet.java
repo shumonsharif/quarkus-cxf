@@ -78,6 +78,9 @@ public class CXFQuarkusServlet extends CXFNonSpringServlet {
                     }
                     factory.setFeatures(features);
                 }
+                if (servletInfo.getSOAPBinding() != null) {
+                    factory.setBindingId(servletInfo.getSOAPBinding());
+                }
 
                 Server server = factory.create();
                 for (String className : servletInfo.getInFaultInterceptors()) {
