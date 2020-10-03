@@ -1,16 +1,17 @@
 package io.quarkus.it.cxf;
 
-import io.quarkus.test.junit.QuarkusTest;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
+
+import io.quarkus.test.junit.QuarkusTest;
 
 @QuarkusTest
-public class FooWebServiceTest {
+public class GreetingClientTest {
     @Test
     void testSoapEndpoint() {
-        FooClient client = new FooClient();
+        GreetingClient client = new GreetingClient();
         Assertions.assertNotNull(client.fooService);
         String res = client.checkPing();
-        Assertions.assertTrue(res.contains("get success"));
+        Assertions.assertTrue(res.contains("bar"));
     }
 }

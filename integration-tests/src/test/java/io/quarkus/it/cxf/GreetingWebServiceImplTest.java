@@ -32,6 +32,15 @@ class GreetingWebServiceImplTest {
     }
 
     @Test
+    void testSoap12Binding() {
+        given()
+            .when().get("/soap/greeting?wsdl")
+            .then()
+            .statusCode(200)
+            .body(containsString("http://schemas.xmlsoap.org/wsdl/soap12/"));
+    }
+
+    @Test
     void testRestEndpoint() {
         given()
                 .when().get("/rest")
