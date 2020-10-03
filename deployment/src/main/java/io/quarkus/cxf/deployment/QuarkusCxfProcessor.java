@@ -20,6 +20,7 @@ import javax.servlet.DispatcherType;
 import javax.xml.bind.JAXBElement;
 import javax.xml.bind.annotation.*;
 import javax.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
+import javax.xml.ws.soap.SOAPBinding;
 
 import io.quarkus.runtime.util.HashUtil;
 import org.apache.cxf.common.jaxb.JAXBUtils;
@@ -130,84 +131,84 @@ class QuarkusCxfProcessor {
             String resultType,
             List<WrapperParameter> params, ClassOutput classOutput, String pkg, String className,
             List<MethodDescriptor> getters, List<MethodDescriptor> setters) {
-        //WrapperClassGenerator
-        ClassCreator classCreator = ClassCreator.builder().classOutput(classOutput)
-                .className(pkg + "." + className + (isRequest ? "" : RESPONSE_CLASS_POSTFIX))
-                .build();
         MethodDescriptor ctorDescriptor = null;
+        //WrapperClassGenerator
+        try (ClassCreator classCreator = ClassCreator.builder().classOutput(classOutput)
+                .className(pkg + "." + className + (isRequest ? "" : RESPONSE_CLASS_POSTFIX))
+                .build()) {
 
-        classCreator.addAnnotation(AnnotationInstance.create(
-                DotName.createSimple(XmlRootElement.class.getName()), null,
-                new AnnotationValue[] { AnnotationValue.createStringValue("name", operationName),
-                        AnnotationValue.createStringValue("namespace", namespace) }));
-        classCreator.addAnnotation(AnnotationInstance.create(
-                DotName.createSimple(XmlAccessorType.class.getName()), null,
-                new AnnotationValue[] {
-                        AnnotationValue.createEnumValue("value",
-                                DotName.createSimple(XmlAccessType.class.getName()), "FIELD") }));
-        //if (!anonymous)
-        classCreator.addAnnotation(AnnotationInstance.create(
-                DotName.createSimple(XmlType.class.getName()), null,
-                new AnnotationValue[] { AnnotationValue.createStringValue("name", operationName),
-                        AnnotationValue.createStringValue("namespace", namespace) }));
+            classCreator.addAnnotation(AnnotationInstance.create(
+                    DotName.createSimple(XmlRootElement.class.getName()), null,
+                    new AnnotationValue[]{AnnotationValue.createStringValue("name", operationName),
+                            AnnotationValue.createStringValue("namespace", namespace)}));
+            classCreator.addAnnotation(AnnotationInstance.create(
+                    DotName.createSimple(XmlAccessorType.class.getName()), null,
+                    new AnnotationValue[]{
+                            AnnotationValue.createEnumValue("value",
+                                    DotName.createSimple(XmlAccessType.class.getName()), "FIELD")}));
+            //if (!anonymous)
+            classCreator.addAnnotation(AnnotationInstance.create(
+                    DotName.createSimple(XmlType.class.getName()), null,
+                    new AnnotationValue[]{AnnotationValue.createStringValue("name", operationName),
+                            AnnotationValue.createStringValue("namespace", namespace)}));
 
-        // else
-        //classCreator.addAnnotation(AnnotationInstance.create(
-        //        DotName.createSimple(XmlType.class.getName()), null,
-        //        new AnnotationValue[] { AnnotationValue.createStringValue("name", "")}));
-        try (MethodCreator ctor = classCreator.getMethodCreator("<init>", "V")) {
-            ctor.setModifiers(Modifier.PUBLIC);
-            ctor.invokeSpecialMethod(MethodDescriptor.ofConstructor(Object.class), ctor.getThis());
-            ctor.returnValue(null);
-            ctorDescriptor = ctor.getMethodDescriptor();
-        }
-        if (!isRequest && resultName != null && resultType != null && !resultType.equals("void")) {
-            //TODO check if method annotation must been forwarded
-            try {
-                createWrapperClassField(getters, setters, classCreator, resultType, resultName,
-                        new ArrayList<AnnotationInstance>());
-            } catch (Exception e) {
-                throw new RuntimeException("failed to create fields:" + resultType);
+            // else
+            //classCreator.addAnnotation(AnnotationInstance.create(
+            //        DotName.createSimple(XmlType.class.getName()), null,
+            //        new AnnotationValue[] { AnnotationValue.createStringValue("name", "")}));
+            try (MethodCreator ctor = classCreator.getMethodCreator("<init>", "V")) {
+                ctor.setModifiers(Modifier.PUBLIC);
+                ctor.invokeSpecialMethod(MethodDescriptor.ofConstructor(Object.class), ctor.getThis());
+                ctor.returnValue(null);
+                ctorDescriptor = ctor.getMethodDescriptor();
             }
-        }
-        int i = 0;
-        for (WrapperParameter param : params) {
-
-            AnnotationInstance webparamAnnotation = param.getAnnotation(WEBPARAM_ANNOTATION);
-            String webParamName = "arg" + i;
-            String webParamTargetNamespace = namespace;
-            WebParam.Mode webParamMode = WebParam.Mode.IN;
-            boolean webParamHeader = false;
-            //not used
-            //String webParamPartName = webparamAnnotation.value("partName").asString();
-            if (webparamAnnotation != null) {
-                AnnotationValue val = webparamAnnotation.value("name");
-                if (val != null) {
-                    webParamName = val.asString();
-                }
-                val = webparamAnnotation.value("targetNamespace");
-                if (val != null) {
-                    webParamTargetNamespace = val.asString();
-                }
-                val = webparamAnnotation.value("mode");
-                if (val != null) {
-                    webParamMode = WebParam.Mode.valueOf(val.asEnum());
-                }
-                val = webparamAnnotation.value("header");
-                if (val != null) {
-                    webParamHeader = val.asBoolean();
+            if (!isRequest && resultName != null && resultType != null && !resultType.equals("void")) {
+                //TODO check if method annotation must been forwarded
+                try {
+                    createWrapperClassField(getters, setters, classCreator, resultType, resultName,
+                            new ArrayList<AnnotationInstance>());
+                } catch (Exception e) {
+                    throw new RuntimeException("failed to create fields:" + resultType);
                 }
             }
+            int i = 0;
+            for (WrapperParameter param : params) {
 
-            if ((webParamMode == WebParam.Mode.OUT && isRequest)
-                    || (webParamMode == WebParam.Mode.IN && !isRequest))
-                continue;
+                AnnotationInstance webparamAnnotation = param.getAnnotation(WEBPARAM_ANNOTATION);
+                String webParamName = "arg" + i;
+                String webParamTargetNamespace = namespace;
+                WebParam.Mode webParamMode = WebParam.Mode.IN;
+                boolean webParamHeader = false;
+                //not used
+                //String webParamPartName = webparamAnnotation.value("partName").asString();
+                if (webparamAnnotation != null) {
+                    AnnotationValue val = webparamAnnotation.value("name");
+                    if (val != null) {
+                        webParamName = val.asString();
+                    }
+                    val = webparamAnnotation.value("targetNamespace");
+                    if (val != null) {
+                        webParamTargetNamespace = val.asString();
+                    }
+                    val = webparamAnnotation.value("mode");
+                    if (val != null) {
+                        webParamMode = WebParam.Mode.valueOf(val.asEnum());
+                    }
+                    val = webparamAnnotation.value("header");
+                    if (val != null) {
+                        webParamHeader = val.asBoolean();
+                    }
+                }
 
-            createWrapperClassField(getters, setters, classCreator, param.getParameterType().name().toString(), webParamName,
-                    param.getAnnotations());
-            i++;
+                if ((webParamMode == WebParam.Mode.OUT && isRequest)
+                        || (webParamMode == WebParam.Mode.IN && !isRequest))
+                    continue;
+
+                createWrapperClassField(getters, setters, classCreator, param.getParameterType().name().toString(), webParamName,
+                        param.getAnnotations());
+                i++;
+            }
         }
-        classCreator.close();
         return ctorDescriptor;
     }
 
@@ -237,19 +238,20 @@ class QuarkusCxfProcessor {
             field.addAnnotation(AnnotationInstance.create(DotName.createSimple(XmlElement.class.getName()),
                     null, annotationValues));
         }
-        MethodCreator getter = classCreator.getMethodCreator(
+        try (MethodCreator getter = classCreator.getMethodCreator(
                 JAXBUtils.nameToIdentifier(webParamName, JAXBUtils.IdentifierType.GETTER),
-                identifier);
-        getter.setModifiers(Modifier.PUBLIC);
-        getter.returnValue(getter.readInstanceField(field.getFieldDescriptor(), getter.getThis()));
-        getters.add(getter.getMethodDescriptor());
-
-        MethodCreator setter = classCreator.getMethodCreator(
+                identifier)) {
+            getter.setModifiers(Modifier.PUBLIC);
+            getter.returnValue(getter.readInstanceField(field.getFieldDescriptor(), getter.getThis()));
+            getters.add(getter.getMethodDescriptor());
+        }
+        try (MethodCreator setter = classCreator.getMethodCreator(
                 JAXBUtils.nameToIdentifier(webParamName, JAXBUtils.IdentifierType.SETTER), void.class,
-                identifier);
-        setter.setModifiers(Modifier.PUBLIC);
-        setter.writeInstanceField(field.getFieldDescriptor(), setter.getThis(), setter.getMethodParam(0));
-        setters.add(setter.getMethodDescriptor());
+                identifier)) {
+            setter.setModifiers(Modifier.PUBLIC);
+            setter.writeInstanceField(field.getFieldDescriptor(), setter.getThis(), setter.getMethodParam(0));
+            setters.add(setter.getMethodDescriptor());
+        }
 
     }
 
@@ -302,155 +304,156 @@ class QuarkusCxfProcessor {
             newClassName = pkg + "." + className + WRAPPER_HELPER_POSTFIX + count;
         }
         classHelpers.add(newClassName);
-        ClassCreator classCreator = ClassCreator.builder().classOutput(classOutput)
+        try (ClassCreator classCreator = ClassCreator.builder().classOutput(classOutput)
                 .className(newClassName)
-                .build();
-        Class<?> objectFactoryCls = null;
-        try {
-            objectFactoryCls = Class.forName(pkg + ".ObjectFactory");
-            //TODO object factory creator
-            // but must be always null for generated class so not sure if we keep that.
-            //String methodName = "create" + className + setMethod.getName().substring(3);
-        } catch (ClassNotFoundException e) {
-            //silently failed
-        }
-
-        FieldCreator factoryField = null;
-        if (objectFactoryCls != null) {
-            factoryField = classCreator.getFieldCreator("factory", objectFactoryCls.getName());
-        }
-
-        try (MethodCreator ctor = classCreator.getMethodCreator("<init>", "V")) {
-            ctor.setModifiers(Modifier.PUBLIC);
-            ctor.invokeSpecialMethod(MethodDescriptor.ofConstructor(Object.class), ctor.getThis());
-            if (objectFactoryCls != null && factoryField != null) {
-                ResultHandle factoryRH = ctor.newInstance(MethodDescriptor.ofConstructor(objectFactoryCls));
-                ctor.writeInstanceField(factoryField.getFieldDescriptor(), ctor.getThis(), factoryRH);
+                .build()) {
+            Class<?> objectFactoryCls = null;
+            try {
+                objectFactoryCls = Class.forName(pkg + ".ObjectFactory");
+                //TODO object factory creator
+                // but must be always null for generated class so not sure if we keep that.
+                //String methodName = "create" + className + setMethod.getName().substring(3);
+            } catch (ClassNotFoundException e) {
+                //silently failed
             }
-            ctor.returnValue(null);
-        }
 
-        try (MethodCreator getSignature = classCreator.getMethodCreator("getSignature", String.class)) {
-            getSignature.setModifiers(Modifier.PUBLIC);
-            ResultHandle signatureRH = getSignature.load(computeSignature(getters, setters));
-            getSignature.returnValue(signatureRH);
-        }
-        try (MethodCreator createWrapperObject = classCreator.getMethodCreator("createWrapperObject", Object.class,
-                List.class)) {
-            createWrapperObject.setModifiers(Modifier.PUBLIC);
-            ResultHandle wrapperRH = createWrapperObject.newInstance(ctorDescriptor);
-            // get list<Object>
-            ResultHandle listRH = createWrapperObject.getMethodParam(0);
+            FieldCreator factoryField = null;
+            if (objectFactoryCls != null) {
+                factoryField = classCreator.getFieldCreator("factory", objectFactoryCls.getName());
+            }
 
-            for (int i = 0; i < setters.size(); i++) {
-                MethodDescriptor setter = setters.get(i);
-                boolean isList = false;
-                try {
-                    isList = List.class.isAssignableFrom(Class.forName(setter.getParameterTypes()[0]));
-                } catch (ClassNotFoundException e) {
-                    // silent fail
+            try (MethodCreator ctor = classCreator.getMethodCreator("<init>", "V")) {
+                ctor.setModifiers(Modifier.PUBLIC);
+                ctor.invokeSpecialMethod(MethodDescriptor.ofConstructor(Object.class), ctor.getThis());
+                if (objectFactoryCls != null && factoryField != null) {
+                    ResultHandle factoryRH = ctor.newInstance(MethodDescriptor.ofConstructor(objectFactoryCls));
+                    ctor.writeInstanceField(factoryField.getFieldDescriptor(), ctor.getThis(), factoryRH);
                 }
-                if (isList) {
-                    MethodDescriptor getter = getters.get(i);
-                    ResultHandle getterListRH = createWrapperObject.invokeVirtualMethod(getter, wrapperRH);
-                    ResultHandle listValRH = createWrapperObject.invokeInterfaceMethod(LIST_GET, listRH,
-                            createWrapperObject.load(i));
-                    createWrapperObject.checkCast(listValRH, List.class);
-                    BranchResult isNullBranch = createWrapperObject.ifNull(getterListRH);
-                    try (BytecodeCreator getterValIsNull = isNullBranch.trueBranch()) {
-                        createWrapperObject.checkCast(listValRH, getter.getReturnType());
-                        createWrapperObject.invokeVirtualMethod(setter, listValRH);
+                ctor.returnValue(null);
+            }
 
-                    }
-                    try (BytecodeCreator getterValIsNotNull = isNullBranch.falseBranch()) {
-                        createWrapperObject.invokeInterfaceMethod(LIST_ADDALL, getterListRH, listValRH);
-                    }
-                } else {
-                    boolean isjaxbElement = false;
+            try (MethodCreator getSignature = classCreator.getMethodCreator("getSignature", String.class)) {
+                getSignature.setModifiers(Modifier.PUBLIC);
+                ResultHandle signatureRH = getSignature.load(computeSignature(getters, setters));
+                getSignature.returnValue(signatureRH);
+            }
+            try (MethodCreator createWrapperObject = classCreator.getMethodCreator("createWrapperObject", Object.class,
+                    List.class)) {
+                createWrapperObject.setModifiers(Modifier.PUBLIC);
+                ResultHandle wrapperRH = createWrapperObject.newInstance(ctorDescriptor);
+                // get list<Object>
+                ResultHandle listRH = createWrapperObject.getMethodParam(0);
+
+                for (int i = 0; i < setters.size(); i++) {
+                    MethodDescriptor setter = setters.get(i);
+                    boolean isList = false;
                     try {
-                        isjaxbElement = JAXBElement.class.isAssignableFrom(Class.forName(setter.getParameterTypes()[0]));
+                        isList = List.class.isAssignableFrom(Class.forName(setter.getParameterTypes()[0]));
                     } catch (ClassNotFoundException e) {
                         // silent fail
                     }
+                    if (isList) {
+                        MethodDescriptor getter = getters.get(i);
+                        ResultHandle getterListRH = createWrapperObject.invokeVirtualMethod(getter, wrapperRH);
+                        ResultHandle listValRH = createWrapperObject.invokeInterfaceMethod(LIST_GET, listRH,
+                                createWrapperObject.load(i));
+                        createWrapperObject.checkCast(listValRH, List.class);
+                        BranchResult isNullBranch = createWrapperObject.ifNull(getterListRH);
+                        try (BytecodeCreator getterValIsNull = isNullBranch.trueBranch()) {
+                            createWrapperObject.checkCast(listValRH, getter.getReturnType());
+                            createWrapperObject.invokeVirtualMethod(setter, listValRH);
 
-                    ResultHandle listValRH = createWrapperObject.invokeInterfaceMethod(LIST_GET, listRH,
-                            createWrapperObject.load(i));
-                    if (isjaxbElement) {
-                        ResultHandle factoryRH = createWrapperObject.readInstanceField(factoryField.getFieldDescriptor(),
-                                createWrapperObject.getThis());
-                        //TODO invoke virtual objectFactoryClass jaxbmethod
+                        }
+                        try (BytecodeCreator getterValIsNotNull = isNullBranch.falseBranch()) {
+                            createWrapperObject.invokeInterfaceMethod(LIST_ADDALL, getterListRH, listValRH);
+                        }
+                    } else {
+                        boolean isjaxbElement = false;
+                        try {
+                            isjaxbElement = JAXBElement.class.isAssignableFrom(Class.forName(setter.getParameterTypes()[0]));
+                        } catch (ClassNotFoundException e) {
+                            // silent fail
+                        }
+
+                        ResultHandle listValRH = createWrapperObject.invokeInterfaceMethod(LIST_GET, listRH,
+                                createWrapperObject.load(i));
+                        if (isjaxbElement) {
+                            ResultHandle factoryRH = createWrapperObject.readInstanceField(factoryField.getFieldDescriptor(),
+                                    createWrapperObject.getThis());
+                            //TODO invoke virtual objectFactoryClass jaxbmethod
+                        }
+                        createWrapperObject.invokeVirtualMethod(setter, wrapperRH, listValRH);
                     }
-                    createWrapperObject.invokeVirtualMethod(setter, wrapperRH, listValRH);
+                    // TODO if setter not created we add by field, but do not think that is needed because I generate everythings
                 }
-                // TODO if setter not created we add by field, but do not think that is needed because I generate everythings
+
+                createWrapperObject.returnValue(wrapperRH);
+            }
+            try (MethodCreator getWrapperParts = classCreator.getMethodCreator("getWrapperParts", List.class, Object.class)) {
+                getWrapperParts.setModifiers(Modifier.PUBLIC);
+                ResultHandle arraylistRH = getWrapperParts.newInstance(ARRAYLIST_CTOR, getWrapperParts.load(getters.size()));
+                ResultHandle objRH = getWrapperParts.getMethodParam(0);
+                ResultHandle wrapperRH = getWrapperParts.checkCast(objRH, pkg + "." + className);
+                for (MethodDescriptor getter : getters) {
+                    ResultHandle wrapperValRH = getWrapperParts.invokeVirtualMethod(getter, wrapperRH);
+                    boolean isjaxbElement = false;
+                    try {
+                        isjaxbElement = JAXBElement.class.isAssignableFrom(Class.forName(getter.getReturnType()));
+                    } catch (ClassNotFoundException e) {
+                        // silent fail
+                    }
+                    if (isjaxbElement) {
+                        wrapperValRH = getWrapperParts.ifNull(wrapperValRH).falseBranch().invokeVirtualMethod(JAXBELEMENT_GETVALUE,
+                                wrapperValRH);
+                    }
+
+                    getWrapperParts.invokeInterfaceMethod(LIST_ADD, arraylistRH, wrapperValRH);
+                }
+                getWrapperParts.returnValue(arraylistRH);
             }
 
-            createWrapperObject.returnValue(wrapperRH);
         }
-        try (MethodCreator getWrapperParts = classCreator.getMethodCreator("getWrapperParts", List.class, Object.class)) {
-            getWrapperParts.setModifiers(Modifier.PUBLIC);
-            ResultHandle arraylistRH = getWrapperParts.newInstance(ARRAYLIST_CTOR, getWrapperParts.load(getters.size()));
-            ResultHandle objRH = getWrapperParts.getMethodParam(0);
-            ResultHandle wrapperRH = getWrapperParts.checkCast(objRH, pkg + "." + className);
-            for (MethodDescriptor getter : getters) {
-                ResultHandle wrapperValRH = getWrapperParts.invokeVirtualMethod(getter, wrapperRH);
-                boolean isjaxbElement = false;
-                try {
-                    isjaxbElement = JAXBElement.class.isAssignableFrom(Class.forName(getter.getReturnType()));
-                } catch (ClassNotFoundException e) {
-                    // silent fail
-                }
-                if (isjaxbElement) {
-                    wrapperValRH = getWrapperParts.ifNull(wrapperValRH).falseBranch().invokeVirtualMethod(JAXBELEMENT_GETVALUE,
-                            wrapperValRH);
-                }
-
-                getWrapperParts.invokeInterfaceMethod(LIST_ADD, arraylistRH, wrapperValRH);
-            }
-            getWrapperParts.returnValue(arraylistRH);
-        }
-
-        classCreator.close();
     }
 
     private void createWrapperFactory(ClassOutput classOutput, String pkg, String className,
             MethodDescriptor ctorDescriptor) {
         String factoryClassName = pkg + "." + className + WRAPPER_FACTORY_POSTFIX;
-        ClassCreator classCreator = ClassCreator.builder().classOutput(classOutput)
+        try (ClassCreator classCreator = ClassCreator.builder().classOutput(classOutput)
                 .className(factoryClassName)
-                .build();
-        try (MethodCreator createWrapper = classCreator.getMethodCreator("create" + className, pkg + "." + className)) {
-            createWrapper.setModifiers(Modifier.PUBLIC);
-            ResultHandle[] argsRH = new ResultHandle[ctorDescriptor.getParameterTypes().length];
-            for (int i = 0; i < ctorDescriptor.getParameterTypes().length; i++) {
-                argsRH[i] = createWrapper.loadNull();
+                .build()) {
+            try (MethodCreator createWrapper = classCreator.getMethodCreator("create" + className, pkg + "." + className)) {
+                createWrapper.setModifiers(Modifier.PUBLIC);
+                ResultHandle[] argsRH = new ResultHandle[ctorDescriptor.getParameterTypes().length];
+                for (int i = 0; i < ctorDescriptor.getParameterTypes().length; i++) {
+                    argsRH[i] = createWrapper.loadNull();
+                }
+                ResultHandle wrapperInstanceRH = createWrapper.newInstance(ctorDescriptor, argsRH);
+
+                createWrapper.returnValue(wrapperInstanceRH);
             }
-            ResultHandle wrapperInstanceRH = createWrapper.newInstance(ctorDescriptor, argsRH);
-
-            createWrapper.returnValue(wrapperInstanceRH);
         }
-
     }
 
     private void createException(ClassOutput classOutput, String exceptionClassName, DotName name) {
-        ClassCreator classCreator = ClassCreator.builder().classOutput(classOutput).superClass(Exception.class)
+        try (ClassCreator classCreator = ClassCreator.builder().classOutput(classOutput).superClass(Exception.class)
                 .className(exceptionClassName)
-                .build();
+                .build()) {
 
-        String FaultClassName = name.toString();
+            String FaultClassName = name.toString();
 
-        FieldCreator field = classCreator.getFieldCreator("faultInfo", FaultClassName).setModifiers(Modifier.PRIVATE);
-        //constructor
-        try (MethodCreator ctor = classCreator.getMethodCreator("<init>", "V", String.class, FaultClassName)) {
-            ctor.setModifiers(Modifier.PUBLIC);
-            ctor.invokeSpecialMethod(MethodDescriptor.ofConstructor(Exception.class, String.class), ctor.getThis(),
-                    ctor.getMethodParam(0));
-            ctor.writeInstanceField(field.getFieldDescriptor(), ctor.getThis(), ctor.getMethodParam(1));
-            ctor.returnValue(null);
-        }
-        try (MethodCreator getter = classCreator.getMethodCreator("getFaultInfo", FaultClassName)) {
-            getter.setModifiers(Modifier.PUBLIC);
-            getter.returnValue(getter.readInstanceField(field.getFieldDescriptor(), getter.getThis()));
+            FieldCreator field = classCreator.getFieldCreator("faultInfo", FaultClassName).setModifiers(Modifier.PRIVATE);
+            //constructor
+            try (MethodCreator ctor = classCreator.getMethodCreator("<init>", "V", String.class, FaultClassName)) {
+                ctor.setModifiers(Modifier.PUBLIC);
+                ctor.invokeSpecialMethod(MethodDescriptor.ofConstructor(Exception.class, String.class), ctor.getThis(),
+                        ctor.getMethodParam(0));
+                ctor.writeInstanceField(field.getFieldDescriptor(), ctor.getThis(), ctor.getMethodParam(1));
+                ctor.returnValue(null);
+            }
+            try (MethodCreator getter = classCreator.getMethodCreator("getFaultInfo", FaultClassName)) {
+                getter.setModifiers(Modifier.PUBLIC);
+                getter.returnValue(getter.readInstanceField(field.getFieldDescriptor(), getter.getThis()));
+            }
         }
     }
 
@@ -529,16 +532,13 @@ class QuarkusCxfProcessor {
         }
 
         forceJaxb.produce(new JaxbFileRootBuildItem("."));
+        //TODO bad code it is set in loop but use outside...
 
         for (AnnotationInstance annotation : index.getAnnotations(WEBSERVICE_ANNOTATION)) {
             if (annotation.target().kind() != AnnotationTarget.Kind.CLASS) {
                 continue;
             }
-            String soapBinding = SOAPBinding.SOAP11HTTP_BINDING;
-            AnnotationInstance bindingTypeAnnotation = index.getAnnotation(annotation.target(), BINDING_TYPE_ANNOTATION);
-            if (bindingTypeAnnotation != null) {
-                soapBinding = bindingTypeAnnotation.value("value");
-            }
+
             annotation.value("targetNamespace");
             ClassInfo wsClassInfo = annotation.target().asClass();
             reflectiveClass
@@ -565,106 +565,107 @@ class QuarkusCxfProcessor {
 
             ClassOutput classOutput = new GeneratedBeanGizmoAdaptor(generatedBeans);
             //https://github.com/apache/cxf/blob/master/rt/frontend/jaxws/src/main/java/org/apache/cxf/jaxws/WrapperClassGenerator.java#L234
-            ClassCreator PackageInfoCreator = ClassCreator.builder().classOutput(classOutput)
+            try (ClassCreator PackageInfoCreator = ClassCreator.builder().classOutput(classOutput)
                     .className(pkg + ".package-info")
-                    .build();
-            List<AnnotationValue> annotationValues = new ArrayList<>();
-            annotationValues.add(AnnotationValue.createStringValue("namespace", namespace));
-            annotationValues.add(AnnotationValue.createEnumValue("elementFormDefault",
-                    DotName.createSimple("javax.xml.bind.annotation.XmlNsForm"),
-                    (namespaceVal != null) ? "QUALIFIED" : "UNQUALIFIED"));
-            PackageInfoCreator.addAnnotation(AnnotationInstance.create(DotName.createSimple(XmlSchema.class.getName()),
-                    null, annotationValues));
-            // TODO find package annotation with yandex (AnnotationTarget.Kind.package do not exists...
-            // then forward value and type of XmlJavaTypeAdapter
-            //            PackageInfoCreator.addAnnotation(AnnotationInstance.create(DotName.createSimple(XmlJavaTypeAdapters.class.getName()),
-            //                    null, annotationValues));
-            //            PackageInfoCreator.addAnnotation(AnnotationInstance.create(DotName.createSimple(XmlJavaTypeAdapter.class.getName()),
-            //                    null, annotationValues));
+                    .build()) {
+                List<AnnotationValue> annotationValues = new ArrayList<>();
+                annotationValues.add(AnnotationValue.createStringValue("namespace", namespace));
+                annotationValues.add(AnnotationValue.createEnumValue("elementFormDefault",
+                        DotName.createSimple("javax.xml.bind.annotation.XmlNsForm"),
+                        (namespaceVal != null) ? "QUALIFIED" : "UNQUALIFIED"));
+                PackageInfoCreator.addAnnotation(AnnotationInstance.create(DotName.createSimple(XmlSchema.class.getName()),
+                        null, annotationValues));
+                // TODO find package annotation with yandex (AnnotationTarget.Kind.package do not exists...
+                // then forward value and type of XmlJavaTypeAdapter
+                //            PackageInfoCreator.addAnnotation(AnnotationInstance.create(DotName.createSimple(XmlJavaTypeAdapters.class.getName()),
+                //                    null, annotationValues));
+                //            PackageInfoCreator.addAnnotation(AnnotationInstance.create(DotName.createSimple(XmlJavaTypeAdapter.class.getName()),
+                //                    null, annotationValues));
 
-            //TODO get SOAPBINDING_ANNOTATION to get iRPC
-            List<MethodDescriptor> setters = new ArrayList<>();
-            List<MethodDescriptor> getters = new ArrayList<>();
-            for (MethodInfo mi : wsClassInfo.methods()) {
-                for (Type exceptionType : mi.exceptions()) {
-                    String exceptionName = exceptionType.name().withoutPackagePrefix() + "_Exception";
-                    if (exceptionType.annotation(WEBFAULT_ANNOTATION) != null) {
-                        exceptionName = exceptionType.annotation(WEBFAULT_ANNOTATION).value("name").asString();
+                //TODO get SOAPBINDING_ANNOTATION to get iRPC
+                List<MethodDescriptor> setters = new ArrayList<>();
+                List<MethodDescriptor> getters = new ArrayList<>();
+                for (MethodInfo mi : wsClassInfo.methods()) {
+                    for (Type exceptionType : mi.exceptions()) {
+                        String exceptionName = exceptionType.name().withoutPackagePrefix() + "_Exception";
+                        if (exceptionType.annotation(WEBFAULT_ANNOTATION) != null) {
+                            exceptionName = exceptionType.annotation(WEBFAULT_ANNOTATION).value("name").asString();
 
+                        }
+                        createException(classOutput, exceptionName, exceptionType.name());
                     }
-                    createException(classOutput, exceptionName, exceptionType.name());
-                }
-                String className = StringUtils.capitalize(mi.name());
-                String operationName = mi.name();
-                AnnotationInstance webMethodAnnotation = mi.annotation(WEBMETHOD_ANNOTATION);
-                if (webMethodAnnotation != null) {
-                    AnnotationValue nameVal = webMethodAnnotation.value("operationName");
-                    if (nameVal != null) {
-                        operationName = nameVal.asString();
+                    String className = StringUtils.capitalize(mi.name());
+                    String operationName = mi.name();
+                    AnnotationInstance webMethodAnnotation = mi.annotation(WEBMETHOD_ANNOTATION);
+                    if (webMethodAnnotation != null) {
+                        AnnotationValue nameVal = webMethodAnnotation.value("operationName");
+                        if (nameVal != null) {
+                            operationName = nameVal.asString();
+                        }
                     }
-                }
 
-                AnnotationInstance webResultAnnotation = mi.annotation(WEBRESULT_ANNOTATION);
-                String resultName = "return";
-                if (webResultAnnotation != null) {
-                    AnnotationValue resultNameVal = webResultAnnotation.value("name");
-                    if (resultNameVal != null) {
-                        resultName = resultNameVal.asString();
+                    AnnotationInstance webResultAnnotation = mi.annotation(WEBRESULT_ANNOTATION);
+                    String resultName = "return";
+                    if (webResultAnnotation != null) {
+                        AnnotationValue resultNameVal = webResultAnnotation.value("name");
+                        if (resultNameVal != null) {
+                            resultName = resultNameVal.asString();
+                        }
                     }
-                }
-                List<WrapperParameter> wrapperParams = new ArrayList<WrapperParameter>();
-                for (int i = 0; i < mi.parameters().size(); i++) {
-                    Type paramType = mi.parameters().get(i);
-                    String paramName = mi.parameterName(i);
-                    List<AnnotationInstance> paramAnnotations = new ArrayList<>();
-                    for (AnnotationInstance methodAnnotation : mi.annotations()) {
-                        if (methodAnnotation.target().kind() != AnnotationTarget.Kind.METHOD_PARAMETER)
-                            continue;
-                        MethodParameterInfo paramInfo = methodAnnotation.target().asMethodParameter();
-                        if (paramInfo != null && paramName.equals(paramInfo.name())) {
-                            paramAnnotations.add(methodAnnotation);
+                    List<WrapperParameter> wrapperParams = new ArrayList<WrapperParameter>();
+                    for (int i = 0; i < mi.parameters().size(); i++) {
+                        Type paramType = mi.parameters().get(i);
+                        String paramName = mi.parameterName(i);
+                        List<AnnotationInstance> paramAnnotations = new ArrayList<>();
+                        for (AnnotationInstance methodAnnotation : mi.annotations()) {
+                            if (methodAnnotation.target().kind() != AnnotationTarget.Kind.METHOD_PARAMETER)
+                                continue;
+                            MethodParameterInfo paramInfo = methodAnnotation.target().asMethodParameter();
+                            if (paramInfo != null && paramName.equals(paramInfo.name())) {
+                                paramAnnotations.add(methodAnnotation);
+                            }
+
                         }
 
+                        wrapperParams.add(new WrapperParameter(paramType, paramAnnotations, paramName));
                     }
+                    // todo get REQUEST_WRAPPER_ANNOTATION to avoid creation of wrapper but create helper based on it
+                    MethodDescriptor requestCtor = createWrapper(true, operationName, namespace, resultName,
+                            mi.returnType().toString(), wrapperParams,
+                            classOutput, pkg, className, getters, setters);
+                    createWrapperHelper(classOutput, pkg, className, requestCtor, getters, setters);
+                    createWrapperFactory(classOutput, pkg, className, requestCtor);
+                    getters.clear();
+                    setters.clear();
+                    // todo get RESPONSE_WRAPPER_ANNOTATION to avoid creation of wrapper but create helper based on it
 
-                    wrapperParams.add(new WrapperParameter(paramType, paramAnnotations, paramName));
+                    MethodDescriptor responseCtor = createWrapper(false, operationName, namespace, resultName,
+                            mi.returnType().toString(), wrapperParams,
+                            classOutput, pkg, className, getters, setters);
+                    createWrapperHelper(classOutput, pkg, className + RESPONSE_CLASS_POSTFIX, responseCtor, getters, setters);
+                    createWrapperFactory(classOutput, pkg, className + RESPONSE_CLASS_POSTFIX, responseCtor);
+                    getters.clear();
+                    setters.clear();
+                    reflectiveClass.produce(new ReflectiveClassBuildItem(true, true, pkg + "." + className));
+                    reflectiveClass
+                            .produce(new ReflectiveClassBuildItem(true, true, pkg + "." + className + RESPONSE_CLASS_POSTFIX));
+                    reflectiveClass
+                            .produce(new ReflectiveClassBuildItem(true, true, pkg + "." + className + WRAPPER_HELPER_POSTFIX));
+                    reflectiveClass.produce(new ReflectiveClassBuildItem(true, true,
+                            pkg + "." + className + RESPONSE_CLASS_POSTFIX + WRAPPER_HELPER_POSTFIX));
+                    reflectiveClass.produce(new ReflectiveClassBuildItem(true, true, pkg + ".ObjectFactory"));
+                    reflectiveClass
+                            .produce(new ReflectiveClassBuildItem(true, true, pkg + "." + className + WRAPPER_FACTORY_POSTFIX));
+                    reflectiveClass.produce(
+                            new ReflectiveClassBuildItem(true, true,
+                                    pkg + "." + className + RESPONSE_CLASS_POSTFIX + WRAPPER_FACTORY_POSTFIX));
+
                 }
-                // todo get REQUEST_WRAPPER_ANNOTATION to avoid creation of wrapper but create helper based on it
-                MethodDescriptor requestCtor = createWrapper(true, operationName, namespace, resultName,
-                        mi.returnType().toString(), wrapperParams,
-                        classOutput, pkg, className, getters, setters);
-                createWrapperHelper(classOutput, pkg, className, requestCtor, getters, setters);
-                createWrapperFactory(classOutput, pkg, className, requestCtor);
-                getters.clear();
-                setters.clear();
-                // todo get RESPONSE_WRAPPER_ANNOTATION to avoid creation of wrapper but create helper based on it
-
-                MethodDescriptor responseCtor = createWrapper(false, operationName, namespace, resultName,
-                        mi.returnType().toString(), wrapperParams,
-                        classOutput, pkg, className, getters, setters);
-                createWrapperHelper(classOutput, pkg, className + RESPONSE_CLASS_POSTFIX, responseCtor, getters, setters);
-                createWrapperFactory(classOutput, pkg, className + RESPONSE_CLASS_POSTFIX, responseCtor);
-                getters.clear();
-                setters.clear();
-                reflectiveClass.produce(new ReflectiveClassBuildItem(true, true, pkg + "." + className));
-                reflectiveClass
-                        .produce(new ReflectiveClassBuildItem(true, true, pkg + "." + className + RESPONSE_CLASS_POSTFIX));
-                reflectiveClass
-                        .produce(new ReflectiveClassBuildItem(true, true, pkg + "." + className + WRAPPER_HELPER_POSTFIX));
-                reflectiveClass.produce(new ReflectiveClassBuildItem(true, true,
-                        pkg + "." + className + RESPONSE_CLASS_POSTFIX + WRAPPER_HELPER_POSTFIX));
-                reflectiveClass.produce(new ReflectiveClassBuildItem(true, true, pkg + ".ObjectFactory"));
-                reflectiveClass
-                        .produce(new ReflectiveClassBuildItem(true, true, pkg + "." + className + WRAPPER_FACTORY_POSTFIX));
-                reflectiveClass.produce(
-                        new ReflectiveClassBuildItem(true, true,
-                                pkg + "." + className + RESPONSE_CLASS_POSTFIX + WRAPPER_FACTORY_POSTFIX));
-
+                //MethodDescriptor requestCtor = createWrapper("parameters", namespace,mi.typeParameters(), classOutput, pkg, pkg+"Parameters", getters, setters);
+                //createWrapperHelper(classOutput, pkg, className, requestCtor, getters, setters);
+                //getters.clear();
+                //setters.clear();
             }
-            //MethodDescriptor requestCtor = createWrapper("parameters", namespace,mi.typeParameters(), classOutput, pkg, pkg+"Parameters", getters, setters);
-            //createWrapperHelper(classOutput, pkg, className, requestCtor, getters, setters);
-            //getters.clear();
-            //setters.clear();
         }
 
         feature.produce(new FeatureBuildItem(FEATURE_CXF));
@@ -717,9 +718,11 @@ class QuarkusCxfProcessor {
             String relativePath = webServicesByPath.getKey();
             String sei = null;
             String wsdlPath = null;
+            String soapBinding = SOAPBinding.SOAP11HTTP_BINDING;
             if (cxfEndPointConfig.wsdlPath.isPresent()) {
                 wsdlPath = cxfEndPointConfig.wsdlPath.get();
             }
+            //TODO add soap1.2 in config file
 
             if (cxfEndPointConfig.serviceInterface.isPresent()) {
                 sei = cxfEndPointConfig.serviceInterface.get();
@@ -731,15 +734,20 @@ class QuarkusCxfProcessor {
                         : wsAbsoluteUrl;
                 wsAbsoluteUrl = relativePath.startsWith("/") ? wsAbsoluteUrl + relativePath
                         : wsAbsoluteUrl + "/" + relativePath;
-
-                generateCxfClientProducer(generatedBeans, sei + "CxfClientProducer", wsAbsoluteUrl, sei, wsdlPath, soapBinding);
+                String seiClientproducerClassName = sei + "CxfClientProducer";
+                generateCxfClientProducer(generatedBeans, seiClientproducerClassName, wsAbsoluteUrl, sei, wsdlPath, soapBinding);
+                unremovableBeans.produce(new UnremovableBeanBuildItem(
+                        new UnremovableBeanBuildItem.BeanClassNameExclusion(seiClientproducerClassName)));
 
             }
             if (cxfEndPointConfig.implementor.isPresent()) {
 
                 DotName webServiceImplementor = DotName.createSimple(cxfEndPointConfig.implementor.get());
                 ClassInfo wsClass = index.getClassByName(webServiceImplementor);
-
+                AnnotationInstance bindingType = wsClass.classAnnotation(BINDING_TYPE_ANNOTATION);
+                if (bindingType != null) {
+                    soapBinding = bindingType.value().asString();
+                }
                 if (wsClass != null) {
                     for (Type wsInterfaceType : wsClass.interfaceTypes()) {
                         //TODO annotation is not seen, do not know why so comment it for now
@@ -847,44 +855,42 @@ class QuarkusCxfProcessor {
             String cxfClientProducerClassName, String endpointAddress, String sei, String wsdlUrl, String soapBinding) {
         ClassOutput classOutput = new GeneratedBeanGizmoAdaptor(generatedBean);
 
-        ClassCreator classCreator = ClassCreator.builder().classOutput(classOutput)
+        try (ClassCreator classCreator = ClassCreator.builder().classOutput(classOutput)
                 .className(cxfClientProducerClassName)
                 .superClass(AbstractCxfClientProducer.class)
-                .build();
-        classCreator.addAnnotation(ApplicationScoped.class);
+                .build()) {
+            classCreator.addAnnotation(ApplicationScoped.class);
 
-        MethodCreator cxfClientMethodCreator = classCreator.getMethodCreator(
-                "createService",
-                sei);
-        cxfClientMethodCreator.addAnnotation(ApplicationScoped.class);
-        cxfClientMethodCreator.addAnnotation(Produces.class);
-        cxfClientMethodCreator.addAnnotation(Default.class);
+            try (MethodCreator cxfClientMethodCreator = classCreator.getMethodCreator("createService", sei)) {
+                cxfClientMethodCreator.addAnnotation(ApplicationScoped.class);
+                cxfClientMethodCreator.addAnnotation(Produces.class);
+                cxfClientMethodCreator.addAnnotation(Default.class);
 
-        ResultHandle seiRH = cxfClientMethodCreator.load(sei);
-        ResultHandle endpointAddressRH = cxfClientMethodCreator.load(endpointAddress);
-        ResultHandle soapBindingRH = cxfClientMethodCreator.load(soapBinding);
+                ResultHandle seiRH = cxfClientMethodCreator.load(sei);
+                ResultHandle endpointAddressRH = cxfClientMethodCreator.load(endpointAddress);
+                ResultHandle soapBindingRH = cxfClientMethodCreator.load(soapBinding);
 
-        ResultHandle wsdlUrlRH;
-        if (wsdlUrl != null) {
-            wsdlUrlRH = cxfClientMethodCreator.load(wsdlUrl);
-        } else {
-            wsdlUrlRH = cxfClientMethodCreator.loadNull();
+                ResultHandle wsdlUrlRH;
+                if (wsdlUrl != null) {
+                    wsdlUrlRH = cxfClientMethodCreator.load(wsdlUrl);
+                } else {
+                    wsdlUrlRH = cxfClientMethodCreator.loadNull();
+                }
+
+                // New configuration
+                ResultHandle cxfClient = cxfClientMethodCreator.invokeVirtualMethod(
+                        MethodDescriptor.ofMethod(AbstractCxfClientProducer.class,
+                                "loadCxfClient",
+                                Object.class,
+                                String.class,
+                                String.class,
+                                String.class,
+                                String.class),
+                        cxfClientMethodCreator.getThis(), seiRH, endpointAddressRH, wsdlUrlRH, soapBindingRH);
+                ResultHandle cxfClientCasted = cxfClientMethodCreator.checkCast(cxfClient, sei);
+                cxfClientMethodCreator.returnValue(cxfClientCasted);
+            }
         }
-
-        // New configuration
-        ResultHandle cxfClient = cxfClientMethodCreator.invokeVirtualMethod(
-                MethodDescriptor.ofMethod(AbstractCxfClientProducer.class,
-                        "loadCxfClient",
-                        Object.class,
-                        String.class,
-                        String.class,
-                        String.class,
-                        String.class),
-                cxfClientMethodCreator.getThis(), seiRH, endpointAddressRH, wsdlUrlRH, soapBindingRH);
-        ResultHandle cxfClientCasted = cxfClientMethodCreator.checkCast(cxfClient, sei);
-        cxfClientMethodCreator.returnValue(cxfClientCasted);
-
-        classCreator.close();
     }
 
     @BuildStep
@@ -1295,25 +1301,26 @@ class QuarkusCxfProcessor {
     private void createProducer(String producerClassName,
             ClassOutput classOutput,
             String webServiceName) {
-        ClassCreator classCreator = ClassCreator.builder().classOutput(classOutput)
+        try (ClassCreator classCreator = ClassCreator.builder().classOutput(classOutput)
                 .className(producerClassName)
-                .build();
-        classCreator.addAnnotation(ApplicationScoped.class);
+                .build()) {
+            classCreator.addAnnotation(ApplicationScoped.class);
 
-        MethodCreator namedWebServiceMethodCreator = classCreator.getMethodCreator(
-                "createWebService_" + HashUtil.sha1(webServiceName),
-                webServiceName);
-        namedWebServiceMethodCreator.addAnnotation(ApplicationScoped.class);
-        namedWebServiceMethodCreator.addAnnotation(Unremovable.class);
-        namedWebServiceMethodCreator.addAnnotation(Produces.class);
-        namedWebServiceMethodCreator.addAnnotation(AnnotationInstance.create(DotNames.NAMED, null,
-                new AnnotationValue[] { AnnotationValue.createStringValue("value", webServiceName) }));
+            try (MethodCreator namedWebServiceMethodCreator = classCreator.getMethodCreator(
+                    "createWebService_" + HashUtil.sha1(webServiceName),
+                    webServiceName)) {
+                namedWebServiceMethodCreator.addAnnotation(ApplicationScoped.class);
+                namedWebServiceMethodCreator.addAnnotation(Unremovable.class);
+                namedWebServiceMethodCreator.addAnnotation(Produces.class);
+                namedWebServiceMethodCreator.addAnnotation(AnnotationInstance.create(DotNames.NAMED, null,
+                        new AnnotationValue[]{AnnotationValue.createStringValue("value", webServiceName)}));
 
-        ResultHandle namedWebService = namedWebServiceMethodCreator
-                .newInstance(MethodDescriptor.ofConstructor(webServiceName));
+                ResultHandle namedWebService = namedWebServiceMethodCreator
+                        .newInstance(MethodDescriptor.ofConstructor(webServiceName));
 
-        namedWebServiceMethodCreator.returnValue(namedWebService);
-        classCreator.close();
+                namedWebServiceMethodCreator.returnValue(namedWebService);
+            }
+        }
     }
 
 }
