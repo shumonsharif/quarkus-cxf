@@ -141,7 +141,7 @@ class QuarkusCxfProcessor {
 
             classCreator.addAnnotation(AnnotationInstance.create(
                     DotName.createSimple(XmlRootElement.class.getName()), null,
-                    new AnnotationValue[]{AnnotationValue.createStringValue("name", operationName),
+                    new AnnotationValue[]{AnnotationValue.createStringValue("name", operationName+ (isRequest ? "" : RESPONSE_CLASS_POSTFIX)),
                             AnnotationValue.createStringValue("namespace", namespace)}));
             classCreator.addAnnotation(AnnotationInstance.create(
                     DotName.createSimple(XmlAccessorType.class.getName()), null,
@@ -151,7 +151,7 @@ class QuarkusCxfProcessor {
             //if (!anonymous)
             classCreator.addAnnotation(AnnotationInstance.create(
                     DotName.createSimple(XmlType.class.getName()), null,
-                    new AnnotationValue[]{AnnotationValue.createStringValue("name", operationName),
+                    new AnnotationValue[]{AnnotationValue.createStringValue("name", operationName+ (isRequest ? "" : RESPONSE_CLASS_POSTFIX)),
                             AnnotationValue.createStringValue("namespace", namespace)}));
 
             // else
