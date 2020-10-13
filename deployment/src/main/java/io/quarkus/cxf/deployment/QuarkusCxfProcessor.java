@@ -252,6 +252,7 @@ class QuarkusCxfProcessor {
                 identifier)) {
             setter.setModifiers(Modifier.PUBLIC);
             setter.writeInstanceField(field.getFieldDescriptor(), setter.getThis(), setter.getMethodParam(0));
+            setter.returnValue(null);
             setters.add(setter.getMethodDescriptor());
         }
 
