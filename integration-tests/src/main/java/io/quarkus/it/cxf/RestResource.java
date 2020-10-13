@@ -9,7 +9,7 @@ import javax.ws.rs.core.MediaType;
 @Path("/rest")
 public class RestResource {
     @Inject
-    public GreetingClientWebService greetingWS;// = CDI.current().select(GreetingWebService.class).get();
+    public GreetingClientWebService greetingWS;
 
     @GET
     @Produces(MediaType.TEXT_PLAIN)
