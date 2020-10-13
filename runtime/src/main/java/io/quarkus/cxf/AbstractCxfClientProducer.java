@@ -24,7 +24,7 @@ public class AbstractCxfClientProducer {
         if (wsdlUrl != null && !wsdlUrl.isEmpty()) {
             factory.setWsdlURL(wsdlUrl);
         }
-        LOGGER.info("csf client loaded for " + sei);
+        LOGGER.info("cxf client loaded for " + sei);
         return factory.create();
     }
 }
