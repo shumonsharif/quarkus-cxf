@@ -22,6 +22,7 @@ import javax.xml.bind.annotation.*;
 import javax.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
 import javax.xml.ws.soap.SOAPBinding;
 
+import io.quarkus.arc.deployment.BeanDefiningAnnotationBuildItem;
 import io.quarkus.runtime.util.HashUtil;
 import org.apache.cxf.common.jaxb.JAXBUtils;
 import org.apache.cxf.common.util.StringUtils;
@@ -132,9 +133,10 @@ class QuarkusCxfProcessor {
             List<WrapperParameter> params, ClassOutput classOutput, String pkg, String className,
             List<MethodDescriptor> getters, List<MethodDescriptor> setters) {
         MethodDescriptor ctorDescriptor = null;
+        String wrapperClassName = pkg + "." + className + (isRequest ? "" : RESPONSE_CLASS_POSTFIX);
         //WrapperClassGenerator
         try (ClassCreator classCreator = ClassCreator.builder().classOutput(classOutput)
-                .className(pkg + "." + className + (isRequest ? "" : RESPONSE_CLASS_POSTFIX))
+                .className(wrapperClassName)
                 .build()) {
 
             classCreator.addAnnotation(AnnotationInstance.create(
@@ -156,7 +158,7 @@ class QuarkusCxfProcessor {
             //classCreator.addAnnotation(AnnotationInstance.create(
             //        DotName.createSimple(XmlType.class.getName()), null,
             //        new AnnotationValue[] { AnnotationValue.createStringValue("name", "")}));
-            try (MethodCreator ctor = classCreator.getMethodCreator("<init>", "V")) {
+            try (MethodCreator ctor = classCreator.getMethodCreator(MethodDescriptor.ofConstructor(wrapperClassName))) {
                 ctor.setModifiers(Modifier.PUBLIC);
                 ctor.invokeSpecialMethod(MethodDescriptor.ofConstructor(Object.class), ctor.getThis());
                 ctor.returnValue(null);
@@ -723,10 +725,11 @@ class QuarkusCxfProcessor {
                 wsdlPath = cxfEndPointConfig.wsdlPath.get();
             }
             //TODO add soap1.2 in config file
-
+            LOGGER.warn("service interface present:" + cxfEndPointConfig.serviceInterface.isPresent());
             if (cxfEndPointConfig.serviceInterface.isPresent()) {
-                sei = cxfEndPointConfig.serviceInterface.get();
 
+                sei = cxfEndPointConfig.serviceInterface.get();
+                LOGGER.warn(" produce loadCxfClient on " + sei);
                 String wsAbsoluteUrl = cxfEndPointConfig.clientEndpointUrl.isPresent()
                         ? cxfEndPointConfig.clientEndpointUrl.get()
                         : "http://localhost:8080";
@@ -834,7 +837,10 @@ class QuarkusCxfProcessor {
         }
 
     }
-
+    @BuildStep
+    BeanDefiningAnnotationBuildItem additionalBeanDefiningAnnotation() {
+        return new BeanDefiningAnnotationBuildItem(WEBSERVICE_ANNOTATION);
+    }
     /**
      * Create Producer bean managing webservice client
      * <p>

@@ -41,11 +41,11 @@ class GreetingWebServiceImplTest {
     }
 
     @Test
-    void testRestEndpoint() {
+    void testRestCxfClient() {
         given()
                 .when().get("/rest")
                 .then()
                 .statusCode(200)
-                .body(containsString("get success"));
+                .body(containsString("Hello foo"));
     }
 }
