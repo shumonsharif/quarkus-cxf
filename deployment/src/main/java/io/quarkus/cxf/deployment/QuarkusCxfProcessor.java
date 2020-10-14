@@ -7,6 +7,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -22,7 +23,10 @@ import javax.xml.bind.annotation.*;
 import javax.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
 import javax.xml.ws.soap.SOAPBinding;
 
+import com.sun.xml.txw2.annotation.XmlNamespace;
 import io.quarkus.arc.deployment.BeanDefiningAnnotationBuildItem;
+import io.quarkus.gizmo.Gizmo;
+import io.quarkus.gizmo.GizmoClassVisitor;
 import io.quarkus.runtime.util.HashUtil;
 import org.apache.cxf.common.jaxb.JAXBUtils;
 import org.apache.cxf.common.util.StringUtils;
@@ -70,6 +74,12 @@ import io.quarkus.undertow.deployment.FilterBuildItem;
 import io.quarkus.undertow.deployment.ServletBuildItem;
 import io.quarkus.undertow.deployment.ServletInitParamBuildItem;
 import io.quarkus.vertx.http.deployment.RouteBuildItem;
+import org.objectweb.asm.AnnotationVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.FieldVisitor;
+import org.objectweb.asm.Label;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 
 class QuarkusCxfProcessor {
 
@@ -88,6 +98,7 @@ class QuarkusCxfProcessor {
     private static final DotName ABSTRACT_INTERCEPTOR = DotName.createSimple("org.apache.cxf.phase.AbstractPhaseInterceptor");
     private static final DotName DATABINDING = DotName.createSimple("org.apache.cxf.databinding");
     private static final DotName BINDING_TYPE_ANNOTATION = DotName.createSimple("javax.xml.ws.BindingType");
+    private static final DotName XML_NAMESPACE = DotName.createSimple("com.sun.xml.txw2.annotation.XmlNamespace");
     private static final Logger LOGGER = Logger.getLogger(QuarkusCxfProcessor.class);
     private static final List<Class<? extends Annotation>> JAXB_ANNOTATIONS = Arrays.asList(
             XmlList.class,
@@ -128,11 +139,12 @@ class QuarkusCxfProcessor {
     private static final String RESPONSE_CLASS_POSTFIX = "Response";
 
     //TODO check if better to reuse the cxf parsing system to generate only asm from their.
+
     private MethodDescriptor createWrapper(boolean isRequest, String operationName, String namespace, String resultName,
             String resultType,
             List<WrapperParameter> params, ClassOutput classOutput, String pkg, String className,
             List<MethodDescriptor> getters, List<MethodDescriptor> setters) {
-        MethodDescriptor ctorDescriptor = null;
+        MethodDescriptor ctorDescriptor;
         String wrapperClassName = pkg + "." + className + (isRequest ? "" : RESPONSE_CLASS_POSTFIX);
         //WrapperClassGenerator
         try (ClassCreator classCreator = ClassCreator.builder().classOutput(classOutput)
@@ -143,11 +155,16 @@ class QuarkusCxfProcessor {
                     DotName.createSimple(XmlRootElement.class.getName()), null,
                     new AnnotationValue[]{AnnotationValue.createStringValue("name", operationName+ (isRequest ? "" : RESPONSE_CLASS_POSTFIX)),
                             AnnotationValue.createStringValue("namespace", namespace)}));
-            classCreator.addAnnotation(AnnotationInstance.create(
+            //TODO remove this attribute because gizmo do not support enum
+            // wait release of gizmo with https://github.com/quarkusio/gizmo/pull/59
+            // to enable it back
+            /*classCreator.addAnnotation(AnnotationInstance.create(
                     DotName.createSimple(XmlAccessorType.class.getName()), null,
-                    new AnnotationValue[]{
-                            AnnotationValue.createEnumValue("value",
-                                    DotName.createSimple(XmlAccessType.class.getName()), "FIELD")}));
+                    new AnnotationValue[]{AnnotationValue.createEnumValue("value",
+                            DotName.createSimple( "javax.xml.bind.annotation.XmlAccessType"),
+                                    "FIELD")}));
+            */
+
             //if (!anonymous)
             classCreator.addAnnotation(AnnotationInstance.create(
                     DotName.createSimple(XmlType.class.getName()), null,
@@ -225,6 +242,9 @@ class QuarkusCxfProcessor {
                 .map(DotName::createSimple)
                 .collect(Collectors.toList());
         boolean annotationAdded = false;
+        //wait fix of XmlAccessorType
+        // before this fix witch annotation to getter
+        /*
         for (AnnotationInstance ann : paramAnnotations) {
             if (jaxbAnnotationDotNames.contains(ann.name())) {
                 // copy jaxb annotation from param to
@@ -240,9 +260,28 @@ class QuarkusCxfProcessor {
             field.addAnnotation(AnnotationInstance.create(DotName.createSimple(XmlElement.class.getName()),
                     null, annotationValues));
         }
+
+         */
         try (MethodCreator getter = classCreator.getMethodCreator(
                 JAXBUtils.nameToIdentifier(webParamName, JAXBUtils.IdentifierType.GETTER),
                 identifier)) {
+                // start quick fix : switch annotation from field to getter
+                for (AnnotationInstance ann : paramAnnotations) {
+                    if (jaxbAnnotationDotNames.contains(ann.name())) {
+                        // copy jaxb annotation from param to getter
+                        getter.addAnnotation(AnnotationInstance.create(ann.name(), null, ann.values()));
+                        annotationAdded = true;
+                    }
+                }
+                if (!annotationAdded) {
+                    List<AnnotationValue> annotationValues = new ArrayList<>();
+                    annotationValues.add(AnnotationValue.createStringValue("name", webParamName));
+                    //TODO handle a config for factory.isWrapperPartQualified, factory.isWrapperPartNillable, factory.getWrapperPartMinOccurs
+                    // and add annotation value here for it
+                    getter.addAnnotation(AnnotationInstance.create(DotName.createSimple(XmlElement.class.getName()),
+                            null, annotationValues));
+                }
+                // end quick fix
             getter.setModifiers(Modifier.PUBLIC);
             getter.returnValue(getter.readInstanceField(field.getFieldDescriptor(), getter.getThis()));
             getters.add(getter.getMethodDescriptor());
@@ -263,10 +302,12 @@ class QuarkusCxfProcessor {
         String[] strs = pkg.split("\\.");
         StringBuilder b = new StringBuilder("http://");
         for (int i = strs.length - 1; i >= 0; i--) {
+            if (i != strs.length - 1) {
+                b.append(".");
+            }
             b.append(strs[i]);
-            b.append("/");
         }
-
+        b.append("/");
         return b.toString();
     }
 
@@ -363,12 +404,12 @@ class QuarkusCxfProcessor {
                         createWrapperObject.checkCast(listValRH, List.class);
                         BranchResult isNullBranch = createWrapperObject.ifNull(getterListRH);
                         try (BytecodeCreator getterValIsNull = isNullBranch.trueBranch()) {
-                            createWrapperObject.checkCast(listValRH, getter.getReturnType());
-                            createWrapperObject.invokeVirtualMethod(setter, listValRH);
+                            getterValIsNull.checkCast(listValRH, getter.getReturnType());
+                            getterValIsNull.invokeVirtualMethod(setter, listValRH);
 
                         }
                         try (BytecodeCreator getterValIsNotNull = isNullBranch.falseBranch()) {
-                            createWrapperObject.invokeInterfaceMethod(LIST_ADDALL, getterListRH, listValRH);
+                            getterValIsNotNull.invokeInterfaceMethod(LIST_ADDALL, getterListRH, listValRH);
                         }
                     } else {
                         boolean isjaxbElement = false;
@@ -459,6 +500,349 @@ class QuarkusCxfProcessor {
             }
         }
     }
+/*
+    private static void createEclipseNamespaceMapper(ClassOutput classOutput) {
+        
+        String className = "org.apache.cxf.jaxb.EclipseNamespaceMapper";
+        String slashedName = "org/apache/cxf/jaxb/EclipseNamespaceMapper";
+        String superName = "org/eclipse/persistence/internal/oxm/record/namespaces/MapNamespacePrefixMapper";
+        ClassWriter file = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+        final GizmoClassVisitor cw = new GizmoClassVisitor(Gizmo.ASM_API_VERSION, file, classOutput.getSourceWriter(slashedName));
+
+        FieldVisitor fv;
+        MethodVisitor mv;
+        cw.visit(Opcodes.V1_6,
+                Opcodes.ACC_PUBLIC + Opcodes.ACC_FINAL + Opcodes.ACC_SUPER,
+                slashedName, null,
+                superName, null);
+
+        cw.visitSource("EclipseNamespaceMapper.java", null);
+
+        fv = cw.visitField(Opcodes.ACC_PRIVATE, "nsctxt", "[Ljava/lang/String;", null, null);
+        fv.visitEnd();
+
+
+        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(Ljava/util/Map;)V",
+                "(Ljava/util/Map<Ljava/lang/String;Ljava/lang/String;>;)V", null);
+        mv.visitCode();
+        Label l0 = new Label();
+        mv.visitLabel(l0);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL,
+                superName, "<init>", "(Ljava/util/Map;)V", false);
+        Label l1 = new Label();
+        mv.visitLabel(l1);
+        mv.visitInsn(Opcodes.RETURN);
+        Label l2 = new Label();
+        mv.visitLabel(l2);
+        mv.visitMaxs(2, 2);
+        mv.visitEnd();
+
+
+        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "setContextualNamespaceDecls", "([Ljava/lang/String;)V",
+                null, null);
+        mv.visitCode();
+        l0 = new Label();
+        mv.visitLabel(l0);
+        mv.visitLineNumber(47, l0);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitFieldInsn(Opcodes.PUTFIELD, slashedName, "nsctxt", "[Ljava/lang/String;");
+        l1 = new Label();
+        mv.visitLabel(l1);
+        mv.visitLineNumber(48, l1);
+        mv.visitInsn(Opcodes.RETURN);
+        l2 = new Label();
+        mv.visitLabel(l2);
+        mv.visitLocalVariable("this", "L" + slashedName + ";", null, l0, l2, 0);
+        mv.visitLocalVariable("contextualNamespaceDecls", "[Ljava/lang/String;", null, l0, l2, 1);
+        mv.visitMaxs(2, 2);
+        mv.visitEnd();
+
+        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "getContextualNamespaceDecls", "()[Ljava/lang/String;", null, null);
+        mv.visitCode();
+        l0 = new Label();
+        mv.visitLabel(l0);
+        mv.visitLineNumber(51, l0);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, slashedName, "nsctxt", "[Ljava/lang/String;");
+        mv.visitInsn(Opcodes.ARETURN);
+        l1 = new Label();
+
+        mv.visitLabel(l1);
+        mv.visitLocalVariable("this", "L" + slashedName + ";", null, l0, l1, 0);
+
+        mv.visitMaxs(1, 1);
+        mv.visitEnd();
+
+
+        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "getPreDeclaredNamespaceUris", "()[Ljava/lang/String;", null, null);
+        mv.visitCode();
+        l0 = new Label();
+        mv.visitLabel(l0);
+        mv.visitLineNumber(1036, l0);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL,
+                superName,
+                "getPreDeclaredNamespaceUris", "()[Ljava/lang/String;", false);
+        mv.visitVarInsn(Opcodes.ASTORE, 1);
+        l1 = new Label();
+        mv.visitLabel(l1);
+        mv.visitLineNumber(1037, l1);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, slashedName, "nsctxt", "[Ljava/lang/String;");
+        l2 = new Label();
+        mv.visitJumpInsn(Opcodes.IFNONNULL, l2);
+        Label l3 = new Label();
+        mv.visitLabel(l3);
+        mv.visitLineNumber(1038, l3);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitLabel(l2);
+        mv.visitLineNumber(1040, l2);
+        mv.visitFrame(Opcodes.F_APPEND, 1, new Object[] {"[Ljava/lang/String;"}, 0, null);
+        mv.visitTypeInsn(Opcodes.NEW, "java/util/ArrayList");
+        mv.visitInsn(Opcodes.DUP);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "asList",
+                "([Ljava/lang/Object;)Ljava/util/List;", false);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/util/ArrayList", "<init>",
+                "(Ljava/util/Collection;)V", false);
+        mv.visitVarInsn(Opcodes.ASTORE, 2);
+        Label l4 = new Label();
+        mv.visitLabel(l4);
+        mv.visitLineNumber(1041, l4);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitVarInsn(Opcodes.ISTORE, 3);
+        Label l5 = new Label();
+        mv.visitLabel(l5);
+        Label l6 = new Label();
+        mv.visitJumpInsn(Opcodes.GOTO, l6);
+        Label l7 = new Label();
+        mv.visitLabel(l7);
+        mv.visitLineNumber(1042, l7);
+        mv.visitFrame(Opcodes.F_APPEND, 2, new Object[] {"java/util/List", Opcodes.INTEGER}, 0, null);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, slashedName, "nsctxt", "[Ljava/lang/String;");
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitInsn(Opcodes.AALOAD);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/List", "remove", "(Ljava/lang/Object;)Z", true);
+        mv.visitInsn(Opcodes.POP);
+        Label l8 = new Label();
+        mv.visitLabel(l8);
+        mv.visitLineNumber(1041, l8);
+        mv.visitIincInsn(3, 2);
+        mv.visitLabel(l6);
+        mv.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+        mv.visitVarInsn(Opcodes.ILOAD, 3);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD,
+                slashedName,
+                "nsctxt", "[Ljava/lang/String;");
+        mv.visitInsn(Opcodes.ARRAYLENGTH);
+        mv.visitJumpInsn(Opcodes.IF_ICMPLT, l7);
+        Label l9 = new Label();
+        mv.visitLabel(l9);
+        mv.visitLineNumber(1044, l9);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/List", "size", "()I", true);
+        mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/String");
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/List",
+                "toArray", "([Ljava/lang/Object;)[Ljava/lang/Object;", true);
+        mv.visitTypeInsn(Opcodes.CHECKCAST, "[Ljava/lang/String;");
+        mv.visitInsn(Opcodes.ARETURN);
+        Label l10 = new Label();
+        mv.visitLabel(l10);
+        mv.visitLocalVariable("this", "L" + slashedName + ";",
+                null, l0, l10, 0);
+        mv.visitLocalVariable("sup", "[Ljava/lang/String;", null, l1, l10, 1);
+        mv.visitLocalVariable("s", "Ljava/util/List;", "Ljava/util/List<Ljava/lang/String;>;", l4, l10, 2);
+        mv.visitLocalVariable("x", "I", null, l5, l9, 3);
+        mv.visitMaxs(3, 4);
+        mv.visitEnd();
+
+        cw.visitEnd();
+
+        classOutput.write(className, file.toByteArray());
+    }
+*/
+    private static void createNamespaceWrapperInternal(ClassOutput classOutput) {
+        String className = "org.apache.cxf.jaxb.NamespaceMapperRI";
+        String superName = "com/sun/xml/bind/marshaller/NamespacePrefixMapper";
+        String postFixedName = "org/apache/cxf/jaxb/NamespaceMapperRI";
+        //TODO translate to gizmo
+        /*try (ClassCreator classCreator = ClassCreator.builder().classOutput(classOutput)
+                .superClass(com.sun.xml.bind.marshaller.NamespacePrefixMapper.class)
+                .className(className)
+                .setFinal(true)
+                .build()) {
+            FieldCreator nspref = classCreator.getFieldCreator("nspref", Map.class).setModifiers(Modifier.PRIVATE + Modifier.FINAL);
+            FieldCreator nsctxt = classCreator.getFieldCreator("nsctxt", String.class).setModifiers(Modifier.PRIVATE);
+            FieldCreator EMPTY_STRING = classCreator.getFieldCreator("EMPTY_STRING", String.class).setModifiers(Modifier.PRIVATE + Modifier.FINAL+ Modifier.STATIC);
+            try (MethodCreator staticCtor = classCreator.getMethodCreator(MethodDescriptor.ofConstructor(className)).setModifiers(Modifier.STATIC)) {
+                ResultHandle newArrayInstance = staticCtor.newArray(String.class, 0);
+                staticCtor.writeStaticField(EMPTY_STRING.getFieldDescriptor(), newArrayInstance);
+                staticCtor.returnValue(null);
+            }
+            try (MethodCreator ctor = classCreator.getMethodCreator(MethodDescriptor.ofConstructor(className, Map.class)).setModifiers(Modifier.PUBLIC)) {
+                ctor.
+            }
+
+        }*/
+        ClassWriter file = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+        final GizmoClassVisitor cw = new GizmoClassVisitor(Gizmo.ASM_API_VERSION, file, classOutput.getSourceWriter(postFixedName));
+
+
+        FieldVisitor fv;
+        MethodVisitor mv;
+
+        cw.visit(Opcodes.V1_6,
+                Opcodes.ACC_PUBLIC + Opcodes.ACC_FINAL + Opcodes.ACC_SUPER,
+                postFixedName, null,
+                superName, null);
+
+        cw.visitSource("NamespaceMapper.java", null);
+
+        fv = cw.visitField(Opcodes.ACC_PRIVATE + Opcodes.ACC_FINAL,
+                "nspref", "Ljava/util/Map;",
+                "Ljava/util/Map<Ljava/lang/String;Ljava/lang/String;>;", null);
+        fv.visitEnd();
+
+        fv = cw.visitField(Opcodes.ACC_PRIVATE, "nsctxt", "[Ljava/lang/String;", null, null);
+        fv.visitEnd();
+
+        fv = cw.visitField(Opcodes.ACC_PRIVATE + Opcodes.ACC_FINAL + Opcodes.ACC_STATIC,
+                "EMPTY_STRING", "[Ljava/lang/String;", null, null);
+        fv.visitEnd();
+
+        mv = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
+        mv.visitCode();
+        Label l0 = new Label();
+        mv.visitLabel(l0);
+        mv.visitLineNumber(30, l0);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/String");
+        mv.visitFieldInsn(Opcodes.PUTSTATIC, postFixedName, "EMPTY_STRING", "[Ljava/lang/String;");
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(1, 0);
+        mv.visitEnd();
+
+        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>",
+                "(Ljava/util/Map;)V",
+                "(Ljava/util/Map<Ljava/lang/String;Ljava/lang/String;>;)V", null);
+        mv.visitCode();
+        l0 = new Label();
+        mv.visitLabel(l0);
+        mv.visitLineNumber(32, l0);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, superName, "<init>", "()V", false);
+        Label l1 = new Label();
+        mv.visitLabel(l1);
+        mv.visitLineNumber(29, l1);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETSTATIC, postFixedName, "EMPTY_STRING", "[Ljava/lang/String;");
+        mv.visitFieldInsn(Opcodes.PUTFIELD, postFixedName, "nsctxt", "[Ljava/lang/String;");
+        Label l2 = new Label();
+        mv.visitLabel(l2);
+        mv.visitLineNumber(33, l2);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitFieldInsn(Opcodes.PUTFIELD, postFixedName, "nspref", "Ljava/util/Map;");
+        Label l3 = new Label();
+        mv.visitLabel(l3);
+        mv.visitLineNumber(34, l3);
+        mv.visitInsn(Opcodes.RETURN);
+        Label l4 = new Label();
+        mv.visitLabel(l4);
+        mv.visitLocalVariable("this", "L" + postFixedName + ";", null, l0, l4, 0);
+        mv.visitLocalVariable("nspref",
+                "Ljava/util/Map;", "Ljava/util/Map<Ljava/lang/String;Ljava/lang/String;>;",
+                l0, l4, 1);
+        mv.visitMaxs(2, 2);
+        mv.visitEnd();
+
+        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "getPreferredPrefix",
+                "(Ljava/lang/String;Ljava/lang/String;Z)Ljava/lang/String;",
+                null, null);
+        mv.visitCode();
+        l0 = new Label();
+        mv.visitLabel(l0);
+        mv.visitLineNumber(39, l0);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, postFixedName, "nspref", "Ljava/util/Map;");
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/Map",
+                "get", "(Ljava/lang/Object;)Ljava/lang/Object;", true);
+        mv.visitTypeInsn(Opcodes.CHECKCAST, "java/lang/String");
+        mv.visitVarInsn(Opcodes.ASTORE, 4);
+        l1 = new Label();
+        mv.visitLabel(l1);
+        mv.visitLineNumber(40, l1);
+        mv.visitVarInsn(Opcodes.ALOAD, 4);
+        l2 = new Label();
+        mv.visitJumpInsn(Opcodes.IFNULL, l2);
+        l3 = new Label();
+        mv.visitLabel(l3);
+        mv.visitLineNumber(41, l3);
+        mv.visitVarInsn(Opcodes.ALOAD, 4);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitLabel(l2);
+        mv.visitLineNumber(43, l2);
+        mv.visitFrame(Opcodes.F_APPEND, 1, new Object[] {"java/lang/String"}, 0, null);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitInsn(Opcodes.ARETURN);
+        l4 = new Label();
+        mv.visitLabel(l4);
+        mv.visitLocalVariable("this", "L" + postFixedName + ";", null, l0, l4, 0);
+        mv.visitLocalVariable("namespaceUri", "Ljava/lang/String;", null, l0, l4, 1);
+        mv.visitLocalVariable("suggestion", "Ljava/lang/String;", null, l0, l4, 2);
+        mv.visitLocalVariable("requirePrefix", "Z", null, l0, l4, 3);
+        mv.visitLocalVariable("prefix", "Ljava/lang/String;", null, l1, l4, 4);
+        mv.visitMaxs(2, 5);
+        mv.visitEnd();
+
+        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "setContextualNamespaceDecls", "([Ljava/lang/String;)V", null, null);
+        mv.visitCode();
+        l0 = new Label();
+        mv.visitLabel(l0);
+        mv.visitLineNumber(47, l0);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitFieldInsn(Opcodes.PUTFIELD, postFixedName, "nsctxt", "[Ljava/lang/String;");
+        l1 = new Label();
+        mv.visitLabel(l1);
+        mv.visitLineNumber(48, l1);
+        mv.visitInsn(Opcodes.RETURN);
+        l2 = new Label();
+        mv.visitLabel(l2);
+        mv.visitLocalVariable("this", "L" + postFixedName + ";", null, l0, l2, 0);
+        mv.visitLocalVariable("contextualNamespaceDecls", "[Ljava/lang/String;", null, l0, l2, 1);
+        mv.visitMaxs(2, 2);
+        mv.visitEnd();
+
+        mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "getContextualNamespaceDecls", "()[Ljava/lang/String;", null, null);
+        mv.visitCode();
+        l0 = new Label();
+        mv.visitLabel(l0);
+        mv.visitLineNumber(51, l0);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETFIELD, postFixedName, "nsctxt", "[Ljava/lang/String;");
+        mv.visitInsn(Opcodes.ARETURN);
+        l1 = new Label();
+
+        mv.visitLabel(l1);
+        mv.visitLocalVariable("this", "L" + postFixedName + ";", null, l0, l1, 0);
+
+        mv.visitMaxs(1, 1);
+        mv.visitEnd();
+
+        cw.visitEnd();
+
+        classOutput.write(className, file.toByteArray());
+    }
 
     @BuildStep
     void markBeansAsUnremovable(BuildProducer<UnremovableBeanBuildItem> unremovables) {
@@ -533,51 +917,66 @@ class QuarkusCxfProcessor {
             LOGGER.info("- Add quarkus-undertow to run CXF within a servlet container");
             return;
         }
+        // Register package-infos for reflection
+        for (AnnotationInstance xmlNamespaceInstance : index.getAnnotations(XML_NAMESPACE)) {
+            reflectiveClass.produce(new ReflectiveClassBuildItem(true, true, xmlNamespaceInstance.target().asClass().name().toString()));
+        }
 
         forceJaxb.produce(new JaxbFileRootBuildItem("."));
         //TODO bad code it is set in loop but use outside...
-
+        ClassOutput classOutput = new GeneratedBeanGizmoAdaptor(generatedBeans);
+        createNamespaceWrapperInternal(classOutput);
+        reflectiveClass.produce(new ReflectiveClassBuildItem(true, true, "org.apache.cxf.jaxb.NamespaceMapperRI"));
+        unremovableBeans.produce(new UnremovableBeanBuildItem(
+                new UnremovableBeanBuildItem.BeanClassNameExclusion("org.apache.cxf.jaxb.NamespaceMapperRI")));
+        Set<String> generatedClass = new HashSet<>();
         for (AnnotationInstance annotation : index.getAnnotations(WEBSERVICE_ANNOTATION)) {
             if (annotation.target().kind() != AnnotationTarget.Kind.CLASS) {
                 continue;
             }
 
-            annotation.value("targetNamespace");
             ClassInfo wsClassInfo = annotation.target().asClass();
             reflectiveClass
                     .produce(new ReflectiveClassBuildItem(true, true, wsClassInfo.name().toString()));
             unremovableBeans.produce(new UnremovableBeanBuildItem(
                     new UnremovableBeanBuildItem.BeanClassNameExclusion(wsClassInfo.name().toString())));
+
             if (!Modifier.isInterface(wsClassInfo.flags())) {
                 continue;
             }
             //ClientProxyFactoryBean
-            proxies.produce(new NativeImageProxyDefinitionBuildItem("java.io.Closeable",
-                    "org.apache.cxf.endpoint.Client", wsClassInfo.name().toString()));
+            //proxies.produce(new NativeImageProxyDefinitionBuildItem("java.io.Closeable",
+            //        "org.apache.cxf.endpoint.Client", wsClassInfo.name().toString()));
+            proxies.produce(new NativeImageProxyDefinitionBuildItem(wsClassInfo.name().toString(),
+                    "javax.xml.ws.BindingProvider", "java.io.Closeable", "org.apache.cxf.endpoint.Client"));
+
             String pkg = wsClassInfo.name().toString();
             int idx = pkg.lastIndexOf('.');
             if (idx != -1 && idx < pkg.length() - 1) {
                 pkg = pkg.substring(0, idx);
             }
+            AnnotationValue namespaceVal = annotation.value("targetNamespace");
+            String namespace = namespaceVal != null ? namespaceVal.asString() : getNamespaceFromPackage(pkg);
 
             pkg = pkg + ".jaxws_asm";
             //TODO config for boolean anonymous = factory.getAnonymousWrapperTypes();
             //if (getAnonymousWrapperTypes) pkg += "_an";
-            AnnotationValue namespaceVal = annotation.value("targetNamespace");
-            String namespace = namespaceVal != null ? namespaceVal.asString() : getNamespaceFromPackage(pkg);
+            //currently package-info is not supported by gizmo so done the whole generation
+            String packageName = pkg + ".package-info";
 
-            ClassOutput classOutput = new GeneratedBeanGizmoAdaptor(generatedBeans);
-            //https://github.com/apache/cxf/blob/master/rt/frontend/jaxws/src/main/java/org/apache/cxf/jaxws/WrapperClassGenerator.java#L234
-            try (ClassCreator PackageInfoCreator = ClassCreator.builder().classOutput(classOutput)
-                    .className(pkg + ".package-info")
-                    .build()) {
-                List<AnnotationValue> annotationValues = new ArrayList<>();
-                annotationValues.add(AnnotationValue.createStringValue("namespace", namespace));
-                annotationValues.add(AnnotationValue.createEnumValue("elementFormDefault",
-                        DotName.createSimple("javax.xml.bind.annotation.XmlNsForm"),
-                        (namespaceVal != null) ? "QUALIFIED" : "UNQUALIFIED"));
-                PackageInfoCreator.addAnnotation(AnnotationInstance.create(DotName.createSimple(XmlSchema.class.getName()),
-                        null, annotationValues));
+            if (!generatedClass.contains(packageName)) {
+                String packagefileName = packageName.replace('.', '/');
+                //https://github.com/apache/cxf/blob/master/rt/frontend/jaxws/src/main/java/org/apache/cxf/jaxws/WrapperClassGenerator.java#L234
+                ClassWriter file = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+                final GizmoClassVisitor cv = new GizmoClassVisitor(Gizmo.ASM_API_VERSION, file, classOutput.getSourceWriter(packagefileName));
+                cv.visit(Opcodes.V1_5, Opcodes.ACC_ABSTRACT + Opcodes.ACC_INTERFACE, packagefileName, null,
+                        "java/lang/Object", null);
+
+                AnnotationVisitor av = cv.visitAnnotation("Ljavax/xml/bind/annotation/XmlSchema;", true);
+                av.visit("namespace", namespace);
+                av.visitEnum("elementFormDefault", "Ljavax/xml/bind/annotation/XmlNsForm;", "QUALIFIED");
+                av.visitEnd();
+
                 // TODO find package annotation with yandex (AnnotationTarget.Kind.package do not exists...
                 // then forward value and type of XmlJavaTypeAdapter
                 //            PackageInfoCreator.addAnnotation(AnnotationInstance.create(DotName.createSimple(XmlJavaTypeAdapters.class.getName()),
@@ -585,54 +984,76 @@ class QuarkusCxfProcessor {
                 //            PackageInfoCreator.addAnnotation(AnnotationInstance.create(DotName.createSimple(XmlJavaTypeAdapter.class.getName()),
                 //                    null, annotationValues));
 
-                //TODO get SOAPBINDING_ANNOTATION to get iRPC
-                List<MethodDescriptor> setters = new ArrayList<>();
-                List<MethodDescriptor> getters = new ArrayList<>();
-                for (MethodInfo mi : wsClassInfo.methods()) {
-                    for (Type exceptionType : mi.exceptions()) {
-                        String exceptionName = exceptionType.name().withoutPackagePrefix() + "_Exception";
-                        if (exceptionType.annotation(WEBFAULT_ANNOTATION) != null) {
-                            exceptionName = exceptionType.annotation(WEBFAULT_ANNOTATION).value("name").asString();
+                cv.visitEnd();
+                classOutput.write(packagefileName, file.toByteArray());
+/*
+                try (ClassCreator classCreator = ClassCreator.builder().classOutput(classOutput)
+                        .className(packageName)
+                        .build()) {
 
-                        }
+                    classCreator.addAnnotation(AnnotationInstance.create(
+                            DotName.createSimple(XmlSchema.class.getName()), null,
+                            new AnnotationValue[]{AnnotationValue.createStringValue("namespace", namespace),
+                                    AnnotationValue.createStringValue("namespace", namespace)}));
+                }*/
+                generatedClass.add(packageName);
+                reflectiveClass.produce(new ReflectiveClassBuildItem(true, true, packageName));
+
+            }
+            //TODO get SOAPBINDING_ANNOTATION to get isRPC
+            //@SOAPBinding(style=Style.RPC, use=Use.LITERAL, parameterStyle=ParameterStyle.BARE)
+            List<MethodDescriptor> setters = new ArrayList<>();
+            List<MethodDescriptor> getters = new ArrayList<>();
+            for (MethodInfo mi : wsClassInfo.methods()) {
+                for (Type exceptionType : mi.exceptions()) {
+                    String exceptionName = exceptionType.name().withoutPackagePrefix() + "_Exception";
+                    if (exceptionType.annotation(WEBFAULT_ANNOTATION) != null) {
+                        exceptionName = exceptionType.annotation(WEBFAULT_ANNOTATION).value("name").asString();
+
+                    }
+                    if (!generatedClass.contains(exceptionName)) {
                         createException(classOutput, exceptionName, exceptionType.name());
+                        generatedClass.add(exceptionName);
                     }
-                    String className = StringUtils.capitalize(mi.name());
-                    String operationName = mi.name();
-                    AnnotationInstance webMethodAnnotation = mi.annotation(WEBMETHOD_ANNOTATION);
-                    if (webMethodAnnotation != null) {
-                        AnnotationValue nameVal = webMethodAnnotation.value("operationName");
-                        if (nameVal != null) {
-                            operationName = nameVal.asString();
+                }
+                String className = StringUtils.capitalize(mi.name());
+                String operationName = mi.name();
+                AnnotationInstance webMethodAnnotation = mi.annotation(WEBMETHOD_ANNOTATION);
+                if (webMethodAnnotation != null) {
+                    AnnotationValue nameVal = webMethodAnnotation.value("operationName");
+                    if (nameVal != null) {
+                        operationName = nameVal.asString();
+                    }
+                }
+
+                AnnotationInstance webResultAnnotation = mi.annotation(WEBRESULT_ANNOTATION);
+                String resultName = "return";
+                if (webResultAnnotation != null) {
+                    AnnotationValue resultNameVal = webResultAnnotation.value("name");
+                    if (resultNameVal != null) {
+                        resultName = resultNameVal.asString();
+                    }
+                }
+                List<WrapperParameter> wrapperParams = new ArrayList<WrapperParameter>();
+                for (int i = 0; i < mi.parameters().size(); i++) {
+                    Type paramType = mi.parameters().get(i);
+                    String paramName = mi.parameterName(i);
+                    List<AnnotationInstance> paramAnnotations = new ArrayList<>();
+                    for (AnnotationInstance methodAnnotation : mi.annotations()) {
+                        if (methodAnnotation.target().kind() != AnnotationTarget.Kind.METHOD_PARAMETER)
+                            continue;
+                        MethodParameterInfo paramInfo = methodAnnotation.target().asMethodParameter();
+                        if (paramInfo != null && paramName.equals(paramInfo.name())) {
+                            paramAnnotations.add(methodAnnotation);
                         }
+
                     }
 
-                    AnnotationInstance webResultAnnotation = mi.annotation(WEBRESULT_ANNOTATION);
-                    String resultName = "return";
-                    if (webResultAnnotation != null) {
-                        AnnotationValue resultNameVal = webResultAnnotation.value("name");
-                        if (resultNameVal != null) {
-                            resultName = resultNameVal.asString();
-                        }
-                    }
-                    List<WrapperParameter> wrapperParams = new ArrayList<WrapperParameter>();
-                    for (int i = 0; i < mi.parameters().size(); i++) {
-                        Type paramType = mi.parameters().get(i);
-                        String paramName = mi.parameterName(i);
-                        List<AnnotationInstance> paramAnnotations = new ArrayList<>();
-                        for (AnnotationInstance methodAnnotation : mi.annotations()) {
-                            if (methodAnnotation.target().kind() != AnnotationTarget.Kind.METHOD_PARAMETER)
-                                continue;
-                            MethodParameterInfo paramInfo = methodAnnotation.target().asMethodParameter();
-                            if (paramInfo != null && paramName.equals(paramInfo.name())) {
-                                paramAnnotations.add(methodAnnotation);
-                            }
+                    wrapperParams.add(new WrapperParameter(paramType, paramAnnotations, paramName));
+                }
+                // todo get REQUEST_WRAPPER_ANNOTATION to avoid creation of wrapper but create helper based on it
 
-                        }
-
-                        wrapperParams.add(new WrapperParameter(paramType, paramAnnotations, paramName));
-                    }
-                    // todo get REQUEST_WRAPPER_ANNOTATION to avoid creation of wrapper but create helper based on it
+                if (!generatedClass.contains(pkg + className)) {
                     MethodDescriptor requestCtor = createWrapper(true, operationName, namespace, resultName,
                             mi.returnType().toString(), wrapperParams,
                             classOutput, pkg, className, getters, setters);
@@ -649,6 +1070,7 @@ class QuarkusCxfProcessor {
                     createWrapperFactory(classOutput, pkg, className + RESPONSE_CLASS_POSTFIX, responseCtor);
                     getters.clear();
                     setters.clear();
+
                     reflectiveClass.produce(new ReflectiveClassBuildItem(true, true, pkg + "." + className));
                     reflectiveClass
                             .produce(new ReflectiveClassBuildItem(true, true, pkg + "." + className + RESPONSE_CLASS_POSTFIX));
@@ -662,13 +1084,14 @@ class QuarkusCxfProcessor {
                     reflectiveClass.produce(
                             new ReflectiveClassBuildItem(true, true,
                                     pkg + "." + className + RESPONSE_CLASS_POSTFIX + WRAPPER_FACTORY_POSTFIX));
-
+                    generatedClass.add(pkg + className);
                 }
-                //MethodDescriptor requestCtor = createWrapper("parameters", namespace,mi.typeParameters(), classOutput, pkg, pkg+"Parameters", getters, setters);
-                //createWrapperHelper(classOutput, pkg, className, requestCtor, getters, setters);
-                //getters.clear();
-                //setters.clear();
+
             }
+            //MethodDescriptor requestCtor = createWrapper("parameters", namespace,mi.typeParameters(), classOutput, pkg, pkg+"Parameters", getters, setters);
+            //createWrapperHelper(classOutput, pkg, className, requestCtor, getters, setters);
+            //getters.clear();
+            //setters.clear();
         }
 
         feature.produce(new FeatureBuildItem(FEATURE_CXF));
@@ -836,7 +1259,7 @@ class QuarkusCxfProcessor {
         for (ClassInfo subclass : index.getAllKnownImplementors(DATABINDING)) {
             reflectiveClass.produce(new ReflectiveClassBuildItem(true, true, subclass.name().toString()));
         }
-
+        //TODO parse XmlSeeAlso annotation to add reflection on class too
     }
     @BuildStep
     BeanDefiningAnnotationBuildItem additionalBeanDefiningAnnotation() {
@@ -932,14 +1355,260 @@ class QuarkusCxfProcessor {
         proxies.produce(new NativeImageProxyDefinitionBuildItem("org.apache.cxf.binding.soap.wsdl.extensions.SoapFault"));
         proxies.produce(new NativeImageProxyDefinitionBuildItem("org.apache.cxf.binding.soap.wsdl.extensions.SoapOperation"));
         proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.marshaller.CharacterEscapeHandler"));
-
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.internal.bind.marshaller.CharacterEscapeHandler"));
+        // all subclass of TypedXmlWriter
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.Annotated"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.Annotation"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.Any"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.Appinfo"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.AttrDecls"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.AttributeType"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.episode.Bindings"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.episode.SchemaBindings"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.episode.Klass"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.episode.Package"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.ComplexContent"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.ComplexExtension"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.ComplexRestriction"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.ComplexType"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.ComplexTypeHost"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.ComplexTypeModel"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.ContentModelContainer"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.Documentation"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.Element"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.ExplicitGroup"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.ExtensionType"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.FixedOrDefault"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.Import"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.List"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.LocalAttribute"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.LocalElement"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.NestedParticle"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.NoFixedFacet"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.Occurs"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.Particle"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.Redefinable"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.SchemaTop"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.SimpleContent"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.SimpleDerivation"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.SimpleExtension"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.SimpleRestriction"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.SimpleRestrictionModel"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.SimpleType"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.SimpleTypeHost"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.TopLevelAttribute"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.TopLevelElement"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.TypeDefParticle"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.TypeHost"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.Union"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.Wildcard"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.txw2.TypedXmlWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.schemagen.xmlschema.Schema"));
+        //proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.model.annotation.Locatable"));
+        //proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.codemodel.JAnnotationWriter"));
+        /*
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.codemodel.XmlIDREFWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlAccessorOrderWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlAccessorTypeWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlAnyAttributeWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlAnyElementWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlAttachmentRefWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlAttributeWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlElementDeclWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlElementRefWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlElementRefsWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlElementWrapperWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlElementWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlElementsWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlEnumValueWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlEnumWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlIDREFWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlIDWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlInlineBinaryDataWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlJavaTypeAdapterWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlListWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlMimeTypeWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlMixedWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlNsWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlRegistryWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlRootElementWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlSchemaTypeWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlSchemaTypesWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlSchemaWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlSeeAlsoWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlTransientWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlTypeWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.tools.xjc.generator.annotation.spec.XmlValueWriter"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.model.impl.PropertySeed"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("com.sun.xml.bind.v2.model.core.TypeInfo"));
+        */
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("org.apache.cxf.common.jaxb.JAXBUtils$S2JJAXBModel"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("org.apache.cxf.common.jaxb.JAXBUtils$Options"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("org.apache.cxf.common.jaxb.JAXBUtils$JCodeModel"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("org.apache.cxf.common.jaxb.JAXBUtils$Mapping"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("org.apache.cxf.common.jaxb.JAXBUtils$TypeAndAnnotation"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("org.apache.cxf.common.jaxb.JAXBUtils$JType"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("org.apache.cxf.common.jaxb.JAXBUtils$JPackage"));
+        proxies.produce(new NativeImageProxyDefinitionBuildItem("org.apache.cxf.common.jaxb.JAXBUtils$JDefinedClass"));
     }
 
     @BuildStep
     public void registerReflectionItems(BuildProducer<ReflectiveClassBuildItem> reflectiveItems) {
         //TODO load all bus-extensions.txt file and parse it to generate the reflective class.
+        //TODO load all handler from https://github.com/apache/cxf/tree/master/rt/frontend/jaxws/src/main/java/org/apache/cxf/jaxws/handler/types
         reflectiveItems.produce(new ReflectiveClassBuildItem(true, true,
                 "io.quarkus.cxf.QuarkusJAXBBeanInfo",
+                "java.net.HttpURLConnection",
+                "com.sun.xml.bind.v2.schemagen.xmlschema.Schema",
+                "com.sun.xml.bind.v2.schemagen.xmlschema.package-info",
+                "com.sun.org.apache.xerces.internal.dom.DocumentTypeImpl",
+                "org.w3c.dom.DocumentType",
+                "java.lang.Throwable",
+                "java.nio.charset.Charset",
+                "com.sun.org.apache.xerces.internal.parsers.StandardParserConfiguration",
+                "com.sun.org.apache.xerces.internal.xni.parser.XMLInputSource",
+                "com.sun.org.apache.xml.internal.resolver.readers.XCatalogReader",
+                "com.sun.org.apache.xml.internal.resolver.readers.ExtendedXMLCatalogReader",
+                "com.sun.org.apache.xml.internal.resolver.Catalog",
+                "org.apache.xml.resolver.readers.OASISXMLCatalogReader",
+                "com.sun.org.apache.xml.internal.resolver.readers.XCatalogReader",
+                "com.sun.org.apache.xml.internal.resolver.readers.OASISXMLCatalogReader",
+                "com.sun.org.apache.xml.internal.resolver.readers.TR9401CatalogReader",
+                "com.sun.org.apache.xml.internal.resolver.readers.SAXCatalogReader",
+                //"com.sun.xml.txw2.TypedXmlWriter",
+                //"com.sun.codemodel.JAnnotationWriter",
+                //"com.sun.xml.txw2.ContainerElement",
+                "javax.xml.parsers.DocumentBuilderFactory",
+                "com.sun.org.apache.xerces.internal.jaxp.DocumentBuilderFactoryImpl",
+                "com.sun.org.apache.xml.internal.serializer.ToXMLStream",
+                "com.sun.org.apache.xerces.internal.dom.EntityImpl",
+                "org.apache.cxf.common.jaxb.JAXBUtils$S2JJAXBModel",
+                "org.apache.cxf.common.jaxb.JAXBUtils$Options",
+                "org.apache.cxf.common.jaxb.JAXBUtils$JCodeModel",
+                "org.apache.cxf.common.jaxb.JAXBUtils$Mapping",
+                "org.apache.cxf.common.jaxb.JAXBUtils$TypeAndAnnotation",
+                "org.apache.cxf.common.jaxb.JAXBUtils$JType",
+                "org.apache.cxf.common.jaxb.JAXBUtils$JPackage",
+                "org.apache.cxf.common.jaxb.JAXBUtils$JDefinedClass",
+                "com.sun.xml.bind.v2.model.nav.ReflectionNavigator",
+                "com.sun.xml.bind.v2.runtime.unmarshaller.StAXExConnector",
+                "com.sun.xml.bind.v2.runtime.unmarshaller.FastInfosetConnector",
+                "com.sun.xml.bind.v2.runtime.output.FastInfosetStreamWriterOutput",
+                "org.jvnet.staxex.XMLStreamWriterEx",
+                "com.sun.xml.bind.v2.runtime.output.StAXExStreamWriterOutput",
+                "org.jvnet.fastinfoset.stax.LowLevelFastInfosetStreamWriter",
+                "com.sun.xml.fastinfoset.stax.StAXDocumentSerializer",
+                "com.sun.xml.fastinfoset.stax.StAXDocumentParser",
+                "org.jvnet.fastinfoset.stax.FastInfosetStreamReader",
+                "org.jvnet.staxex.XMLStreamReaderEx",
+                // missing from jaxp extension
+                //GregorSamsa but which package ???
+                "com.sun.org.apache.xalan.internal.xsltc.dom.CollatorFactoryBase",
+                //objecttype in jaxp
+                "com.sun.org.apache.xerces.internal.impl.xs.XMLSchemaLoader",
+                "java.lang.Object",
+                "java.lang.String",
+                "java.math.BigInteger",
+                "java.math.BigDecimal",
+                "javax.xml.datatype.XMLGregorianCalendar",
+                "javax.xml.datatype.Duration",
+                "java.lang.Integer",
+                "java.lang.Long",
+                "java.lang.Short",
+                "java.lang.Float",
+                "java.lang.Double",
+                "java.lang.Boolean",
+                "java.lang.Byte",
+                "java.lang.StringBuffer",
+                "java.lang.Throwable",
+                "java.lang.Character",
+                "com.sun.xml.bind.api.CompositeStructure",
+                "java.net.URI",
+                "javax.xml.bind.JAXBElement",
+                "javax.xml.namespace.QName",
+                "java.awt.Image",
+                "java.io.File",
+                "java.lang.Class",
+                "java.lang.Void",
+                "java.net.URL",
+                "java.util.Calendar",
+                "java.util.Date",
+                "java.util.GregorianCalendar",
+                "java.util.UUID",
+                "javax.activation.DataHandler",
+                "javax.xml.transform.Source",
+                "com.sun.org.apache.xml.internal.serializer.ToXMLSAXHandler",
+                "com.sun.org.apache.xerces.internal.xni.parser.XMLParserConfiguration",
+                "com.sun.org.apache.xerces.internal.parsers.StandardParserConfiguration",
+                "com.sun.org.apache.xerces.internal.xni.parser.XMLInputSource",
+                "org.xml.sax.helpers.XMLReaderAdapter",
+                "org.xml.sax.helpers.XMLFilterImpl",
+                "javax.xml.validation.ValidatorHandler",
+                "org.xml.sax.ext.DefaultHandler2",
+                "org.xml.sax.helpers.DefaultHandler",
+                "com.sun.org.apache.xalan.internal.lib.Extensions",
+                "com.sun.org.apache.xalan.internal.lib.ExsltCommon",
+                "com.sun.org.apache.xalan.internal.lib.ExsltMath",
+                "com.sun.org.apache.xalan.internal.lib.ExsltSets",
+                "com.sun.org.apache.xalan.internal.lib.ExsltDatetime",
+                "com.sun.org.apache.xalan.internal.lib.ExsltStrings",
+                "com.sun.org.apache.xerces.internal.dom.DocumentImpl",
+                "com.sun.org.apache.xalan.internal.processor.TransformerFactoryImpl",
+                "com.sun.org.apache.xerces.internal.dom.CoreDocumentImpl",
+                "com.sun.org.apache.xerces.internal.dom.PSVIDocumentImpl",
+                "com.sun.org.apache.xpath.internal.domapi.XPathEvaluatorImpl",
+                "com.sun.org.apache.xerces.internal.impl.xs.XMLSchemaValidator",
+                "com.sun.org.apache.xerces.internal.impl.dtd.XMLDTDValidator",
+                "com.sun.org.apache.xml.internal.utils.FastStringBuffer",
+                "com.sun.xml.internal.stream.events.XMLEventFactoryImpl",
+                "com.sun.xml.internal.stream.XMLOutputFactoryImpl",
+                "com.sun.xml.internal.stream.XMLInputFactoryImpl",
+                "com.sun.org.apache.xerces.internal.jaxp.datatype.DatatypeFactoryImpl",
+                "javax.xml.stream.XMLStreamConstants",
+                "com.sun.org.apache.xalan.internal.xslt.XSLProcessorVersion",
+                "com.sun.org.apache.xalan.internal.processor.XSLProcessorVersion",
+                "com.sun.org.apache.xalan.internal.Version",
+                "com.sun.org.apache.xerces.internal.framework.Version",
+                "com.sun.org.apache.xerces.internal.impl.Version",
+                "org.apache.crimson.parser.Parser2",
+                "org.apache.tools.ant.Main",
+                "org.w3c.dom.Document",
+                "org.w3c.dom.Node",
+                "org.xml.sax.Parser",
+                "org.xml.sax.XMLReader",
+                "org.xml.sax.helpers.AttributesImpl",
+                //already in jaxp quarkus extension
+                //"com.sun.org.apache.xalan.internal.xsltc.trax.TransformerFactoryImpl",
+                //"com.sun.org.apache.xerces.internal.jaxp.SAXParserFactoryImpl",
+                //"com.sun.org.apache.xerces.internal.jaxp.DocumentBuilderFactoryImpl",
+                //"com.sun.xml.internal.bind.v2.ContextFactory",
+                //"com.sun.xml.bind.v2.ContextFactory",
+                "org.apache.cxf.common.logging.Slf4jLogger",
+                "io.quarkus.cxf.AddressTypeExtensibility",
+                "io.quarkus.cxf.CXFException",
+                "io.quarkus.cxf.HTTPClientPolicyExtensibility",
+                "io.quarkus.cxf.HTTPServerPolicyExtensibility",
+                "io.quarkus.cxf.XMLBindingMessageFormatExtensibility",
+                "io.quarkus.cxf.XMLFormatBindingExtensibility",
+                "org.apache.cxf.common.util.ReflectionInvokationHandler",
+                "com.sun.codemodel.internal.writer.FileCodeWriter",
+                "com.sun.codemodel.writer.FileCodeWriter",
+                "com.sun.xml.internal.bind.marshaller.NoEscapeHandler",
+                "com.sun.xml.internal.bind.marshaller.MinimumEscapeHandler",
+                "com.sun.xml.internal.bind.marshaller.DumbEscapeHandler",
+                "com.sun.xml.internal.bind.marshaller.NioEscapeHandler",
+                "com.sun.xml.bind.marshaller.NoEscapeHandler",
+                "com.sun.xml.bind.marshaller.MinimumEscapeHandler",
+                "com.sun.xml.bind.marshaller.DumbEscapeHandler",
+                "com.sun.xml.bind.marshaller.NioEscapeHandler",
+                "org.apache.cxf.common.jaxb.NamespaceMapper",
+                "org.apache.cxf.jaxb.NamespaceMapper",
+                "com.sun.tools.internal.xjc.api.XJC",
+                "com.sun.tools.xjc.api.XJC",
+                "com.sun.xml.internal.bind.api.JAXBRIContext",
+                "com.sun.xml.bind.api.JAXBRIContext",
+                "org.apache.cxf.common.util.ReflectionInvokationHandler",
+                "javax.xml.ws.wsaddressing.W3CEndpointReference",
                 "org.apache.cxf.common.jaxb.JAXBBeanInfo",
                 "javax.xml.bind.JAXBContext",
                 "com.sun.xml.bind.v2.runtime.LeafBeanInfoImpl",
@@ -951,8 +1620,36 @@ class QuarkusCxfProcessor {
                 "com.sun.xml.bind.v2.runtime.CompositeStructureBeanInfo",
                 "com.sun.xml.bind.v2.runtime.ElementBeanInfoImpl",
                 "com.sun.xml.bind.v2.runtime.MarshallerImpl",
+                "com.sun.xml.messaging.saaj.soap.SOAPDocumentImpl",
+                "com.sun.xml.internal.messaging.saaj.soap.SOAPDocumentImpl",
+                "com.sun.org.apache.xerces.internal.dom.DOMXSImplementationSourceImpl",
+                "javax.wsdl.Types",
+                "javax.wsdl.extensions.mime.MIMEPart",
                 "com.sun.xml.bind.v2.runtime.BridgeContextImpl",
-                "com.sun.xml.bind.v2.runtime.JAXBContextImpl"));
+                "com.sun.xml.bind.v2.runtime.JAXBContextImpl",
+                "com.sun.xml.bind.subclassReplacements",
+                "com.sun.xml.bind.defaultNamespaceRemap",
+                "com.sun.xml.bind.c14n",
+                "com.sun.xml.bind.v2.model.annotation.RuntimeAnnotationReader",
+                "com.sun.xml.bind.XmlAccessorFactory",
+                "com.sun.xml.bind.treatEverythingNillable",
+                "com.sun.xml.bind.retainReferenceToInfo",
+                "com.sun.xml.internal.bind.subclassReplacements",
+                "com.sun.xml.internal.bind.defaultNamespaceRemap",
+                "com.sun.xml.internal.bind.c14n",
+                "org.apache.cxf.common.jaxb.SchemaCollectionContextProxy",
+                "com.sun.xml.internal.bind.v2.model.annotation.RuntimeAnnotationReader",
+                "com.sun.xml.internal.bind.XmlAccessorFactory",
+                "com.sun.xml.internal.bind.treatEverythingNillable",
+                "com.sun.xml.bind.marshaller.CharacterEscapeHandler",
+                "com.sun.xml.internal.bind.marshaller.CharacterEscapeHandler",
+                "com.sun.org.apache.xerces.internal.dom.ElementNSImpl",
+                "sun.security.ssl.SSLLogger",
+                "com.ibm.wsdl.extensions.schema.SchemaImpl",
+                "com.ibm.wsdl.extensions.soap12.SOAP12BindingImpl",
+                "com.ibm.wsdl.extensions.soap12.SOAP12OperationImpl",
+                "com.ibm.wsdl.extensions.soap12.SOAP12AddressImpl",
+                "com.sun.xml.internal.bind.retainReferenceToInfo"));
         reflectiveItems.produce(new ReflectiveClassBuildItem(false, false,
                 //manually added
                 "org.apache.cxf.wsdl.interceptors.BareInInterceptor",
@@ -961,7 +1658,6 @@ class QuarkusCxfProcessor {
                 "org.apache.cxf.wsdl.interceptors.DocLiteralInInterceptor",
                 "StaxSchemaValidationInInterceptor",
                 "org.apache.cxf.binding.soap.interceptor.SoapHeaderInterceptor",
-                "org.w3c.dom.Node",
                 "org.apache.cxf.binding.soap.model.SoapHeaderInfo",
                 "javax.xml.stream.XMLStreamReader",
                 "java.util.List",
@@ -987,12 +1683,11 @@ class QuarkusCxfProcessor {
                 "org.apache.cxf.binding.soap.interceptor.SoapOutInterceptor$SoapOutEndingInterceptor",
                 "org.apache.cxf.binding.soap.interceptor.SoapOutInterceptor",
                 "org.apache.cxf.binding.soap.interceptor.StartBodyInterceptor",
-                "java.net.URI",
                 "java.lang.Exception",
                 "org.apache.cxf.staxutils.W3CDOMStreamWriter",
                 "javax.xml.stream.XMLStreamReader",
                 "javax.xml.stream.XMLStreamWriter",
-                "org.apache.cxf.common.jaxb.SchemaCollectionContextProxy",
+                "org.apache.cxf.common.jaxb.JAXBContextCache",
                 "com.ctc.wstx.sax.WstxSAXParserFactory",
                 "com.ibm.wsdl.BindingFaultImpl",
                 "com.ibm.wsdl.BindingImpl",
@@ -1017,31 +1712,16 @@ class QuarkusCxfProcessor {
                 "com.ibm.wsdl.ServiceImpl",
                 "com.ibm.wsdl.TypesImpl",
                 "com.oracle.xmlns.webservices.jaxws_databinding.ObjectFactory",
-                "com.sun.codemodel.internal.writer.FileCodeWriter",
-                "com.sun.codemodel.writer.FileCodeWriter",
                 "com.sun.org.apache.xerces.internal.utils.XMLSecurityManager",
                 "com.sun.org.apache.xerces.internal.utils.XMLSecurityPropertyManager",
-                "com.sun.tools.internal.xjc.api.XJC",
-                "com.sun.tools.xjc.api.XJC",
-                "com.sun.xml.bind.api.JAXBRIContext",
                 "com.sun.xml.bind.api.TypeReference",
                 "com.sun.xml.bind.DatatypeConverterImpl",
-                "com.sun.xml.bind.marshaller.CharacterEscapeHandler",
                 "com.sun.xml.bind.marshaller.MinimumEscapeHandler",
-                "com.sun.xml.bind.v2.ContextFactory",
-                "com.sun.xml.internal.bind.api.JAXBRIContext",
                 "com.sun.xml.internal.bind.api.TypeReference",
                 "com.sun.xml.internal.bind.DatatypeConverterImpl",
                 "com.sun.xml.internal.bind.marshaller.MinimumEscapeHandler",
-                "com.sun.xml.internal.bind.v2.ContextFactory",
                 "com.sun.xml.ws.runtime.config.ObjectFactory",
                 "ibm.wsdl.DefinitionImpl",
-                "io.quarkus.cxf.AddressTypeExtensibility",
-                "io.quarkus.cxf.CXFException",
-                "io.quarkus.cxf.HTTPClientPolicyExtensibility",
-                "io.quarkus.cxf.HTTPServerPolicyExtensibility",
-                "io.quarkus.cxf.XMLBindingMessageFormatExtensibility",
-                "io.quarkus.cxf.XMLFormatBindingExtensibility",
                 "io.swagger.jaxrs.DefaultParameterExtension",
                 "io.undertow.server.HttpServerExchange",
                 "io.undertow.UndertowOptions",
@@ -1079,8 +1759,6 @@ class QuarkusCxfProcessor {
                 "javax.wsdl.Service",
                 "javax.wsdl.Types",
                 "javax.xml.bind.annotation.XmlSeeAlso",
-                "javax.xml.bind.JAXBElement",
-                "javax.xml.namespace.QName",
                 "javax.xml.soap.SOAPMessage",
                 "javax.xml.transform.stax.StAXSource",
                 "javax.xml.ws.Action",
@@ -1109,8 +1787,6 @@ class QuarkusCxfProcessor {
                 "org.apache.cxf.bindings.xformat.XMLFormatBinding",
                 "org.apache.cxf.bus.CXFBusFactory",
                 "org.apache.cxf.bus.managers.BindingFactoryManagerImpl",
-                "org.apache.cxf.common.jaxb.NamespaceMapper",
-                "org.apache.cxf.common.jaxb.SchemaCollectionContextProxy",
                 "org.apache.cxf.interceptor.Fault",
                 "org.apache.cxf.jaxb.DatatypeFactory",
                 "org.apache.cxf.jaxb.JAXBDataBinding",
@@ -1128,9 +1804,7 @@ class QuarkusCxfProcessor {
                 "org.apache.cxf.transports.http.configuration.HTTPServerPolicy",
                 "org.apache.cxf.transports.http.configuration.ObjectFactory",
                 "org.apache.cxf.ws.addressing.wsdl.AttributedQNameType",
-                "org.apache.cxf.ws.addressing.wsdl.AttributedQNameType",
                 "org.apache.cxf.ws.addressing.wsdl.ObjectFactory",
-                "org.apache.cxf.ws.addressing.wsdl.ServiceNameType",
                 "org.apache.cxf.ws.addressing.wsdl.ServiceNameType",
                 "org.apache.cxf.wsdl.http.AddressType",
                 "org.apache.cxf.wsdl.http.ObjectFactory",
@@ -1236,6 +1910,7 @@ class QuarkusCxfProcessor {
 
     @BuildStep
     NativeImageResourceBuildItem nativeImageResourceBuildItem() {
+        //TODO add @HandlerChain (file) and parse it to add class loading
         return new NativeImageResourceBuildItem("com/sun/xml/fastinfoset/resources/ResourceBundle.properties",
                 "META-INF/cxf/bus-extensions.txt",
                 "META-INF/cxf/cxf.xml",
@@ -1244,6 +1919,7 @@ class QuarkusCxfProcessor {
                 "META-INF/blueprint.handlers",
                 "META-INF/spring.handlers",
                 "META-INF/spring.schemas",
+                "META-INF/jax-ws-catalog.xml",
                 "OSGI-INF/metatype/workqueue.xml",
                 "schemas/core.xsd",
                 "schemas/blueprint/core.xsd",
