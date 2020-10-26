@@ -350,6 +350,7 @@ class QuarkusCxfProcessor {
         classHelpers.add(newClassName);
         try (ClassCreator classCreator = ClassCreator.builder().classOutput(classOutput)
                 .className(newClassName)
+                .interfaces("org.apache.cxf.databinding.WrapperHelper")
                 .build()) {
             Class<?> objectFactoryCls = null;
             try {
