@@ -1,66 +1,26 @@
 package io.quarkus.cxf.graal;
 
 import com.oracle.svm.core.annotate.Alias;
-import com.oracle.svm.core.annotate.Inject;
 import com.oracle.svm.core.annotate.Substitute;
 import com.oracle.svm.core.annotate.TargetClass;
-import com.sun.xml.bind.v2.WellKnownNamespace;
-import com.sun.xml.bind.v2.model.core.NonElement;
-import com.sun.xml.bind.v2.model.core.TypeInfoSet;
-import com.sun.xml.bind.v2.model.nav.Navigator;
-import com.sun.xml.bind.v2.schemagen.xmlschema.Schema;
-import com.sun.xml.bind.api.ErrorListener;
-import com.sun.xml.txw2.TXW;
-import com.sun.xml.txw2.output.ResultFactory;
 import io.quarkus.cxf.CXFException;
-import io.quarkus.cxf.FoolProofResolver;
-import org.apache.cxf.common.jaxb.JAXBBeanInfo;
-import org.apache.cxf.common.jaxb.JAXBContextProxy;
 import org.apache.cxf.common.logging.LogUtils;
 import org.apache.cxf.common.util.ReflectionInvokationHandler;
 import org.apache.cxf.common.util.ReflectionUtil;
 import org.apache.cxf.common.util.StringUtils;
-import org.apache.cxf.common.xmlschema.SchemaCollection;
 import org.apache.cxf.databinding.WrapperHelper;
 import org.apache.cxf.jaxws.support.JaxWsServiceFactoryBean;
 import org.apache.cxf.service.model.InterfaceInfo;
 import org.apache.cxf.service.model.MessageInfo;
 import org.apache.cxf.service.model.MessagePartInfo;
 import org.apache.cxf.service.model.OperationInfo;
-import org.apache.cxf.service.model.ServiceInfo;
-import org.apache.ws.commons.schema.XmlSchema;
-import org.apache.ws.commons.schema.XmlSchemaElement;
-import org.apache.ws.commons.schema.XmlSchemaSimpleType;
-import org.apache.ws.commons.schema.XmlSchemaSimpleTypeList;
-import org.apache.ws.commons.schema.XmlSchemaType;
-import org.w3c.dom.Document;
 
-import javax.xml.bind.JAXBContext;
-import javax.xml.bind.SchemaOutputResolver;
-import javax.xml.bind.annotation.XmlList;
-import javax.xml.bind.annotation.adapters.XmlAdapter;
-import javax.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
 import javax.xml.namespace.QName;
-import javax.xml.transform.Result;
-import javax.xml.transform.Transformer;
-import javax.xml.transform.TransformerFactory;
-import javax.xml.transform.dom.DOMResult;
-import javax.xml.transform.dom.DOMSource;
-import javax.xml.transform.stream.StreamResult;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.io.StringWriter;
-import java.io.Writer;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.logging.Level;
@@ -120,6 +80,7 @@ final class Target_org_apache_cxf_jaxb_JAXBDataBinding {
             Method[] getMethods, Method[] jaxbMethods,
             Field[] fields, Object objectFactory) {
         LOG.info("compileWrapperHelper substitution");
+        //TODO calculate signature to have the same one than generated else iterate on count.
         int count = 1;
         String newClassName = wrapperType.getName() + "_WrapperTypeHelper" + count;
         //todo handle signature

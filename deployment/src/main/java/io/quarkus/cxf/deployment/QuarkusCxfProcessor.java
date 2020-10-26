@@ -140,7 +140,7 @@ class QuarkusCxfProcessor {
 
     //TODO check if better to reuse the cxf parsing system to generate only asm from their.
 
-    private MethodDescriptor createWrapper(boolean isRequest, String operationName, String namespace, String resultName,
+    private MethodDescriptor createWrapper(boolean isRequest, String operationName, String namespace, String resultNamespace, String resultName,
             String resultType,
             List<WrapperParameter> params, ClassOutput classOutput, String pkg, String className,
             List<MethodDescriptor> getters, List<MethodDescriptor> setters) {
@@ -184,7 +184,7 @@ class QuarkusCxfProcessor {
             if (!isRequest && resultName != null && resultType != null && !resultType.equals("void")) {
                 //TODO check if method annotation must been forwarded
                 try {
-                    createWrapperClassField(getters, setters, classCreator, resultType, resultName,
+                    createWrapperClassField(getters, setters, classCreator, resultType, resultNamespace, resultName,
                             new ArrayList<AnnotationInstance>());
                 } catch (Exception e) {
                     throw new RuntimeException("failed to create fields:" + resultType);
@@ -195,7 +195,7 @@ class QuarkusCxfProcessor {
 
                 AnnotationInstance webparamAnnotation = param.getAnnotation(WEBPARAM_ANNOTATION);
                 String webParamName = "arg" + i;
-                String webParamTargetNamespace = namespace;
+                String webParamTargetNamespace = "";//namespace;
                 WebParam.Mode webParamMode = WebParam.Mode.IN;
                 boolean webParamHeader = false;
                 //not used
@@ -223,7 +223,7 @@ class QuarkusCxfProcessor {
                         || (webParamMode == WebParam.Mode.IN && !isRequest))
                     continue;
 
-                createWrapperClassField(getters, setters, classCreator, param.getParameterType().name().toString(), webParamName,
+                createWrapperClassField(getters, setters, classCreator, param.getParameterType().name().toString(), webParamTargetNamespace, webParamName,
                         param.getAnnotations());
                 i++;
             }
@@ -232,7 +232,7 @@ class QuarkusCxfProcessor {
     }
 
     private void createWrapperClassField(List<MethodDescriptor> getters, List<MethodDescriptor> setters,
-            ClassCreator classCreator, String identifier, String webParamName, List<AnnotationInstance> paramAnnotations) {
+            ClassCreator classCreator, String identifier, String webParamTargetNamespace, String webParamName, List<AnnotationInstance> paramAnnotations) {
         String fieldName = JAXBUtils.nameToIdentifier(webParamName, JAXBUtils.IdentifierType.VARIABLE);
 
         FieldCreator field = classCreator.getFieldCreator(fieldName, identifier)
@@ -276,6 +276,7 @@ class QuarkusCxfProcessor {
                 if (!annotationAdded) {
                     List<AnnotationValue> annotationValues = new ArrayList<>();
                     annotationValues.add(AnnotationValue.createStringValue("name", webParamName));
+                    annotationValues.add(AnnotationValue.createStringValue("namespace", webParamTargetNamespace));
                     //TODO handle a config for factory.isWrapperPartQualified, factory.isWrapperPartNillable, factory.getWrapperPartMinOccurs
                     // and add annotation value here for it
                     getter.addAnnotation(AnnotationInstance.create(DotName.createSimple(XmlElement.class.getName()),
@@ -843,7 +844,7 @@ class QuarkusCxfProcessor {
 
         cw.visitEnd();
 
-        classOutput.write(className, file.toByteArray());
+        classOutput.write(postFixedName, file.toByteArray());
     }
 
     @BuildStep
@@ -1030,10 +1031,15 @@ class QuarkusCxfProcessor {
 
                 AnnotationInstance webResultAnnotation = mi.annotation(WEBRESULT_ANNOTATION);
                 String resultName = "return";
+                String resultNamespace = "";
                 if (webResultAnnotation != null) {
                     AnnotationValue resultNameVal = webResultAnnotation.value("name");
+                    AnnotationValue resultNamespaceVal = webResultAnnotation.value("targetNamespace");
                     if (resultNameVal != null) {
                         resultName = resultNameVal.asString();
+                    }
+                    if (resultNamespaceVal != null) {
+                        resultNamespace = resultNamespaceVal.asString();
                     }
                 }
                 List<WrapperParameter> wrapperParams = new ArrayList<WrapperParameter>();
@@ -1056,7 +1062,7 @@ class QuarkusCxfProcessor {
                 // todo get REQUEST_WRAPPER_ANNOTATION to avoid creation of wrapper but create helper based on it
 
                 if (!generatedClass.contains(pkg + className)) {
-                    MethodDescriptor requestCtor = createWrapper(true, operationName, namespace, resultName,
+                    MethodDescriptor requestCtor = createWrapper(true, operationName, namespace, resultNamespace, resultName,
                             mi.returnType().toString(), wrapperParams,
                             classOutput, pkg, className, getters, setters);
                     String wrapperHelperClassName = createWrapperHelper(classOutput, pkg, className, requestCtor, getters, setters);
@@ -1065,7 +1071,7 @@ class QuarkusCxfProcessor {
                     setters.clear();
                     // todo get RESPONSE_WRAPPER_ANNOTATION to avoid creation of wrapper but create helper based on it
 
-                    MethodDescriptor responseCtor = createWrapper(false, operationName, namespace, resultName,
+                    MethodDescriptor responseCtor = createWrapper(false, operationName, namespace, resultNamespace, resultName,
                             mi.returnType().toString(), wrapperParams,
                             classOutput, pkg, className, getters, setters);
                     String wrapperHelperResponseClassName = createWrapperHelper(classOutput, pkg, className + RESPONSE_CLASS_POSTFIX, responseCtor, getters, setters);
