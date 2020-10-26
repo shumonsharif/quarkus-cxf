@@ -337,7 +337,7 @@ class QuarkusCxfProcessor {
         return b.toString();
     }
 
-    private void createWrapperHelper(ClassOutput classOutput, String pkg, String className,
+    private String createWrapperHelper(ClassOutput classOutput, String pkg, String className,
             MethodDescriptor ctorDescriptor, List<MethodDescriptor> getters, List<MethodDescriptor> setters) {
         //WrapperClassGenerator
         int count = 1;
@@ -457,6 +457,7 @@ class QuarkusCxfProcessor {
             }
 
         }
+        return newClassName;
     }
 
     private void createWrapperFactory(ClassOutput classOutput, String pkg, String className,
@@ -1057,7 +1058,7 @@ class QuarkusCxfProcessor {
                     MethodDescriptor requestCtor = createWrapper(true, operationName, namespace, resultName,
                             mi.returnType().toString(), wrapperParams,
                             classOutput, pkg, className, getters, setters);
-                    createWrapperHelper(classOutput, pkg, className, requestCtor, getters, setters);
+                    String wrapperHelperClassName = createWrapperHelper(classOutput, pkg, className, requestCtor, getters, setters);
                     createWrapperFactory(classOutput, pkg, className, requestCtor);
                     getters.clear();
                     setters.clear();
@@ -1066,7 +1067,7 @@ class QuarkusCxfProcessor {
                     MethodDescriptor responseCtor = createWrapper(false, operationName, namespace, resultName,
                             mi.returnType().toString(), wrapperParams,
                             classOutput, pkg, className, getters, setters);
-                    createWrapperHelper(classOutput, pkg, className + RESPONSE_CLASS_POSTFIX, responseCtor, getters, setters);
+                    String wrapperHelperResponseClassName = createWrapperHelper(classOutput, pkg, className + RESPONSE_CLASS_POSTFIX, responseCtor, getters, setters);
                     createWrapperFactory(classOutput, pkg, className + RESPONSE_CLASS_POSTFIX, responseCtor);
                     getters.clear();
                     setters.clear();
@@ -1075,9 +1076,9 @@ class QuarkusCxfProcessor {
                     reflectiveClass
                             .produce(new ReflectiveClassBuildItem(true, true, pkg + "." + className + RESPONSE_CLASS_POSTFIX));
                     reflectiveClass
-                            .produce(new ReflectiveClassBuildItem(true, true, pkg + "." + className + WRAPPER_HELPER_POSTFIX));
-                    reflectiveClass.produce(new ReflectiveClassBuildItem(true, true,
-                            pkg + "." + className + RESPONSE_CLASS_POSTFIX + WRAPPER_HELPER_POSTFIX));
+                            .produce(new ReflectiveClassBuildItem(true, true, wrapperHelperClassName));
+                    reflectiveClass
+                            .produce(new ReflectiveClassBuildItem(true, true, wrapperHelperResponseClassName));
                     reflectiveClass.produce(new ReflectiveClassBuildItem(true, true, pkg + ".ObjectFactory"));
                     reflectiveClass
                             .produce(new ReflectiveClassBuildItem(true, true, pkg + "." + className + WRAPPER_FACTORY_POSTFIX));
