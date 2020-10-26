@@ -20,7 +20,9 @@ public class AbstractCxfClientProducer {
         JaxWsProxyFactoryBean factory = new JaxWsProxyFactoryBean();
         factory.setServiceClass(seiClass);
         factory.setAddress(endpointAddress);
-        factory.setBindingId(soapBinding);
+        if (soapBinding != null) {
+            factory.setBindingId(soapBinding);
+        }
         if (wsdlUrl != null && !wsdlUrl.isEmpty()) {
             factory.setWsdlURL(wsdlUrl);
         }

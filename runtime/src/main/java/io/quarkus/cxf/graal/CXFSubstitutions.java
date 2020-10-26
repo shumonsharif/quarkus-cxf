@@ -1,15 +1,10 @@
 package io.quarkus.cxf.graal;
 
-import java.lang.annotation.Annotation;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.Set;
-import java.util.logging.Logger;
-
-import javax.xml.namespace.QName;
-
+import com.oracle.svm.core.annotate.Alias;
+import com.oracle.svm.core.annotate.Substitute;
+import com.oracle.svm.core.annotate.TargetClass;
+import io.quarkus.cxf.CXFException;
+import org.apache.cxf.common.logging.LogUtils;
 import org.apache.cxf.common.util.ReflectionInvokationHandler;
 import org.apache.cxf.common.util.ReflectionUtil;
 import org.apache.cxf.common.util.StringUtils;
@@ -20,11 +15,16 @@ import org.apache.cxf.service.model.MessageInfo;
 import org.apache.cxf.service.model.MessagePartInfo;
 import org.apache.cxf.service.model.OperationInfo;
 
-import com.oracle.svm.core.annotate.Alias;
-import com.oracle.svm.core.annotate.Substitute;
-import com.oracle.svm.core.annotate.TargetClass;
-
-import io.quarkus.cxf.CXFException;
+import javax.xml.namespace.QName;
+import java.lang.annotation.Annotation;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.Map;
+import java.util.Set;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 @TargetClass(className = "org.apache.cxf.wsdl.JAXBExtensionHelper")
 final class Target_org_apache_cxf_wsdl_JAXBExtensionHelper {
@@ -34,9 +34,8 @@ final class Target_org_apache_cxf_wsdl_JAXBExtensionHelper {
     @Substitute()
     private static Class<?> createExtensionClass(Class<?> cls, QName qname, ClassLoader loader) {
         try {
-
-            Class<?> clz = Class.forName("io.quarkus.cxf." + cls.getSimpleName() + "Extensibility");
             LOG.info("extensibility class substitute: " + cls.getName());
+            Class<?> clz = Class.forName("io.quarkus.cxf." + cls.getSimpleName() + "Extensibility");
             return clz;
         } catch (ClassNotFoundException e) {
             LOG.warning("extensibility class to create: " + cls.getName());
@@ -48,15 +47,15 @@ final class Target_org_apache_cxf_wsdl_JAXBExtensionHelper {
 }
 
 @TargetClass(className = "org.apache.cxf.jaxb.JAXBContextInitializer")
-final class Target_org_aapche_cxf_jaxb_JAXBContextInitializer {
+final class Target_org_apache_cxf_jaxb_JAXBContextInitializer {
     @Alias
     private static Logger LOG = null;
 
     @Substitute()
     private Object createFactory(Class<?> cls, Constructor<?> contructor) {
         try {
+            LOG.info("substitute  JAXBContextInitializer.createFactory class for : " + cls.getSimpleName());
             Class<?> factoryClass = Class.forName("io.quarkus.cxf." + cls.getSimpleName() + "Factory");
-            LOG.info("load factory class for : " + cls.getSimpleName());
             try {
                 return factoryClass.getConstructor().newInstance();
             } catch (Exception e) {
@@ -81,20 +80,23 @@ final class Target_org_apache_cxf_jaxb_JAXBDataBinding {
             Method[] getMethods, Method[] jaxbMethods,
             Field[] fields, Object objectFactory) {
         LOG.info("compileWrapperHelper substitution");
+        //TODO calculate signature to have the same one than generated else iterate on count.
         int count = 1;
         String newClassName = wrapperType.getName() + "_WrapperTypeHelper" + count;
         //todo handle signature
         Class<?> cls = null;
         try {
-            cls = Class.forName(newClassName);
+            cls = Thread.currentThread().getContextClassLoader().loadClass(newClassName);
         } catch (ClassNotFoundException e) {
             LOG.warning("Wrapper helper class not found : " + e.toString());
         }
 
         WrapperHelper helper = null;
         try {
-            helper = WrapperHelper.class.cast(cls.getConstructor().newInstance());
-            return helper;
+            if (cls != null) {
+                helper = WrapperHelper.class.cast(cls.getConstructor().newInstance());
+                return helper;
+            }
         } catch (Exception e) {
             LOG.warning("Wrapper helper class not created : " + e.toString());
         }
@@ -128,7 +130,7 @@ final class Target_org_apache_cxf_jaxws_WrapperClassGenerator {
             OperationInfo op,
             Method method,
             boolean isRequest) {
-        LOG.info("wrapper class substitution : " + op.getName());
+        LOG.info("wrapper class substitution : " + op.getName()+ (isRequest?"":"Response"));
         QName wrapperElement = messageInfo.getName();
         //TODO handle it when config for anonymous is handle
         //boolean anonymous = factory.getAnonymousWrapperTypes();
@@ -140,6 +142,7 @@ final class Target_org_apache_cxf_jaxws_WrapperClassGenerator {
         if (!isRequest) {
             className = className + "Response";
         }
+
         // generation is done on quarkus side now
         Class<?> clz = null;
         try {
@@ -158,6 +161,8 @@ final class Target_org_apache_cxf_endpoint_dynamic_TypeClassInitializer$Exceptio
 
     @Substitute
     public Class<?> createExceptionClass(Class<?> bean) throws ClassNotFoundException {
+        Logger LOG = LogUtils.getL7dLogger(org.apache.cxf.endpoint.dynamic.TypeClassInitializer.class);
+        LOG.info("Substitute TypeClassInitializer$ExceptionCreator.createExceptionClass");
         //TODO not sure if I use CXFException or generated one. I have both system in place. but I use CXFEx currently.
         String newClassName = CXFException.class.getSimpleName();
 
@@ -173,6 +178,43 @@ final class Target_org_apache_cxf_endpoint_dynamic_TypeClassInitializer$Exceptio
                         newClassName + " exception not implemented yet for GraalVM native images", ex);
             }
         }
+    }
+}
+
+@TargetClass(className = "org.apache.cxf.common.jaxb.JAXBUtils")
+final class Target_org_apache_cxf_common_jaxb_JAXBUtils {
+    @Alias
+    private static Logger LOG = null;
+
+    @Substitute
+    private static synchronized Object createNamespaceWrapper(Class<?> mcls, Map<String, String> map) {
+        LOG.info("Substitute JAXBUtils.createNamespaceWrapper");
+        Throwable t = null;
+        Class<?> clz = null;
+        try {
+            clz = Class.forName("org.apache.cxf.jaxb.NamespaceMapperRI");
+        } catch (ClassNotFoundException e) {
+            // ignore
+            t = e;
+        }
+        if (clz == null && (!mcls.getName().contains(".internal.") && mcls.getName().contains("com.sun"))) {
+            try {
+                clz = Class.forName("org.apache.cxf.common.jaxb.NamespaceMapper");
+            } catch (Throwable ex2) {
+                // ignore
+                t = ex2;
+            }
+        }
+        if (clz != null) {
+            try {
+                return clz.getConstructor(Map.class).newInstance(map);
+            } catch (Exception e) {
+                // ignore
+                t = e;
+            }
+        }
+        LOG.log(Level.INFO, "Could not create a NamespaceMapper compatible with Marshaller class " + mcls.getName(), t);
+        return null;
     }
 }
 
